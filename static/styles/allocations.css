@@ -194,9 +194,15 @@
 }
 
 .oa-status-badge.completed {
-    background-color: #d4edda;
-    color: #155724;
-    border: 1px solid #c3e6cb;
+    background-color: #f3e5f5;
+    color: #8e24aa;
+    border: 1px solid #e1bee7;
+}
+
+.oa-status-badge.dispatch {
+    background-color: #66BB6A;
+    color: #FFFFFF;
+    border: 1px solid #4CAF50;
 }
 
 .oa-status-badge.processing {
@@ -612,8 +618,15 @@
 }
 
 .status-badge.completed {
-    background-color: #e8f5e9;
-    color: #2e7d32;
+    background-color: #f3e5f5;
+    color: #8e24aa;
+    border: 1px solid #e1bee7;
+}
+
+.status-badge.dispatch {
+    background-color: #66BB6A;
+    color: #FFFFFF;
+    border: 1px solid #4CAF50;
 }
 
 .status-badge.processing {
@@ -1715,9 +1728,9 @@ input[type="file"]:hover {
 }
 
 .status-badge.dispatch {
-    background-color: #f3e5f5;
-    color: #8e24aa;
-    border: 1px solid #e1bee7;
+    background-color: #66BB6A;
+    color: #FFFFFF;
+    border: 1px solid #4CAF50;
 }
 
 .status-badge.pending {
@@ -1759,9 +1772,9 @@ input[type="file"]:hover {
 }
 
 .status-badge.completed {
-    background-color: #66BB6A;
-    color: #FFFFFF;
-    border: 1px solid #4CAF50;
+    background-color: #f3e5f5;
+    color: #8e24aa;
+    border: 1px solid #e1bee7;
 }
 
 .status-cell {
@@ -1822,6 +1835,12 @@ input[type="file"]:hover {
 }
 
 .oa-status-badge.completed {
+    background-color: #f3e5f5;
+    color: #8e24aa;
+    border: 1px solid #e1bee7;
+}
+
+.oa-status-badge.dispatch {
     background-color: #66BB6A;
     color: #FFFFFF;
     border: 1px solid #4CAF50;

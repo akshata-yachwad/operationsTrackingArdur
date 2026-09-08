@@ -3389,3 +3389,13 @@ select.editable-input:hover:not(:disabled) {
     box-shadow: 0 0 0 2px #ffe082;
     transition: background 0.3s;
 }
+/* Responsive Scaling for smaller screens / Windows 125% scaling */
+@media screen and (max-width: 1440px) {
+    body { zoom: 0.9; }
+}
+@media screen and (max-width: 1366px) {
+    body { zoom: 0.8; }
+}
+@media screen and (max-width: 1200px) {
+    body { zoom: 0.75; }
+}

@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="user-id" content="{{ request.user.emp_id }}">
+    <title>Title Indexing Dashboard · OpsTracking</title>
+    <link rel="stylesheet" href="{{ static('styles/userdashboard.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+    <link rel="stylesheet" href="{{ static('css/toast.css') }}">
+    <style>
+        .indexing-container {
+            max-width: 800px;
+            margin: 40px auto;
+            text-align: center;
+            background: #fff;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+        }
+        .timer-display {
+            font-size: 4rem;
+            font-family: monospace;
+            font-weight: bold;
+            color: #2d3561;
+            margin: 30px 0;
+        }
+        .action-buttons {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .btn-start {
+            background-color: #28a745;
+            color: white;
+            padding: 15px 40px;
+            font-size: 1.2rem;
+            border: none;
+            border-radius: 30px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-start:hover:not(:disabled) {
+            background-color: #218838;
+            transform: translateY(-2px);
+        }
+        .btn-start:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .btn-submit {
+            background-color: #007bff;
+            color: white;
+            padding: 15px 40px;
+            font-size: 1.2rem;
+            border: none;
+            border-radius: 30px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: none;
+        }
+        .btn-submit:hover:not(:disabled) {
+            background-color: #0069d9;
+            transform: translateY(-2px);
+        }
+        .btn-submit:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+        /* Modal styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+        }
+        .modal-content {
+            background-color: #fff;
+            margin: 10% auto;
+            padding: 30px;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 400px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.2);
+            text-align: left;
+        }
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .modal-header h2 {
+            margin: 0;
+            font-size: 1.5rem;
+            color: #333;
+        }
+        .close-btn {
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: #888;
+        }
+        .close-btn:hover {
+            color: #333;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #555;
+        }
+        .form-group input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 1rem;
+        }
+        .modal-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+        .btn-secondary {
+            background: #e2e6ea;
+            color: #333;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+        .btn-primary {
+            background: #007bff;
+            color: #fff;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <!-- Top Header -->
+    <header class="top-header">
+        <div class="header-left">
+            <div class="logo">
+                <i class="fas fa-layer-group" style="margin-right: 8px;"></i>OpsTracking
+            </div>
+            <div class="project-indicator" style="margin-left: 20px; background: rgba(255,255,255,0.1); padding: 5px 10px; border-radius: 4px; font-size: 0.9rem;">
+                TITLE INDEXING
+            </div>
+        </div>
+
+        <div class="header-right">
+            <div class="date-display">
+                <i class="far fa-calendar-alt"></i>
+                <span id="current-date">{{ current_date }}</span>
+            </div>
+            <div class="user-profile">
+                <div class="avatar">{{ username[:1] if username else 'U' }}</div>
+                <div class="user-info">
+                    <span class="user-name">{{ username }}</span>
+                    <span class="user-role">{{ role }}</span>
+                </div>
+                <div class="dropdown-menu">
+                    <button class="logout-btn" onclick="logout()"><i class="fas fa-sign-out-alt"></i> Logout</button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content Container -->
+    <div class="main-content" style="padding-top: 80px;">
+        <div class="indexing-container">
+            <h2><i class="fas fa-keyboard"></i> Title Indexing Workspace</h2>
+            <p style="color: #666; margin-top: 10px;">Click Start to begin tracking your time. When you are ready to submit your work units, click Submit Work.</p>
+            
+            <div class="timer-display" id="main-timer">00:00:00</div>
+            
+            <div class="action-buttons">
+                <button class="btn-start" id="btn-start-indexing" onclick="startIndexingSession()">
+                    <i class="fas fa-play"></i> Start
+                </button>
+                <button class="btn-submit" id="btn-submit-indexing" onclick="openSubmitModal()">
+                    <i class="fas fa-check-circle"></i> Submit Work
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Submit Units Modal -->
+    <div id="submitUnitsModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Submit Work Units</h2>
+                <button class="close-btn" onclick="closeSubmitModal()"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <form id="submit-units-form">
+                    <div class="form-group">
+                        <label for="units-completed">Units Completed</label>
+                        <input type="number" id="units-completed" min="1" required placeholder="Enter number (e.g., 50)">
+                    </div>
+                    <div class="modal-actions">
+                        <button type="button" class="btn-secondary" onclick="closeSubmitModal()">Cancel</button>
+                        <button type="submit" class="btn-primary" id="btn-confirm-submit">Submit & Continue</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div id="toast-container"></div>
+
+    <!-- Dependencies -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="{{ static('js/core/toast.js') }}"></script>
+    <script src="{{ static('js/core/api.js') }}"></script>
+    <script>
+        function logout() {
+            $.ajax({
+                url: '/api/v1/auth/logout/',
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || ''
+                },
+                success: function() {
+                    window.location.href = '/login/';
+                }
+            });
+        }
+    </script>
+    <script src="{{ static('js/userdashboard/userdashboard-indexing.js') }}"></script>
+</body>
+</html>

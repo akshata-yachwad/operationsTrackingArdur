@@ -1,10 +1,20 @@
 function formatStatusDisplay(statusStr) {
     if (!statusStr) return '-';
     let s = statusStr.toLowerCase();
-    if (s === 'send_for_qc' || s === 'send__for__qc') return 'Send for QC';
-    if (s === 'in_progress' || s === 'in__progress') return 'In Progress';
+    if (s === 'ready_for_qc') return 'Ready for QC';
+    if (s === 'search_in_progress') return 'Search In Progress';
+    if (s === 'qc_in_progress') return 'QC In Progress';
+    if (s === 'completed') return 'Search Complete';
     return statusStr.replace(/_+/g, ' ');
 }
+
+// Global state for Cancel Order Modal
+let currentCancelTaskId = null;
+let currentCancelBadge = null;
+let currentCancelBtn = null;
+let cancelModal = null;
+let cancelReasonInput = null;
+let cancelForm = null;
 
 document.addEventListener('DOMContentLoaded', function() {
     // Add toggle form functionality
@@ -17,6 +27,71 @@ document.addEventListener('DOMContentLoaded', function() {
     const feesInput = document.getElementById('oa_fees');
     const vendorRatesContainer = document.getElementById('vendor-rates-container');
 
+    // Cancel Order Modal State assignments
+    cancelModal = document.getElementById('cancel-order-popup');
+    cancelReasonInput = document.getElementById('cancel-reason');
+    cancelForm = document.getElementById('cancel-order-form');
+
+    function closeCancelModal() {
+        if (cancelModal) cancelModal.style.display = 'none';
+        if (cancelReasonInput) cancelReasonInput.value = '';
+        currentCancelTaskId = null;
+        currentCancelBadge = null;
+        if (currentCancelBtn) {
+            currentCancelBtn.disabled = false;
+            currentCancelBtn = null;
+        }
+    }
+
+    if (cancelModal) {
+        document.getElementById('close-cancel-order').addEventListener('click', (e) => { e.preventDefault(); closeCancelModal(); });
+        document.getElementById('cancel-order-dismiss').addEventListener('click', (e) => { e.preventDefault(); closeCancelModal(); });
+        
+        cancelForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const reason = cancelReasonInput.value.trim();
+            if (!reason) {
+                alert('A cancellation reason is required.');
+                return;
+            }
+            if (!currentCancelTaskId) return;
+            
+            const submitBtn = cancelForm.querySelector('button[type="submit"]');
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Cancelling...';
+            
+            try {
+                const resp = await fetch(`/api/v1/allocations/${encodeURIComponent(currentCancelTaskId)}/cancel/`, {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || ''
+                    },
+                    body: JSON.stringify({ reason: reason })
+                });
+                const data = await resp.json().catch(() => ({}));
+                if (!resp.ok || !data.ok) {
+                    throw new Error(data.error || data.detail || `Failed to cancel (HTTP ${resp.status})`);
+                }
+                
+                if (currentCancelBadge) {
+                    currentCancelBadge.className = 'status-badge cancelled';
+                    currentCancelBadge.textContent = 'Cancelled';
+                }
+                
+                // Close any open status menus (including the cancel menu itself)
+                document.querySelectorAll('.status-action-menu').forEach(m => m.remove());
+                closeCancelModal();
+            } catch (err) {
+                console.error('Cancel order failed:', err);
+                alert(err.message || 'Failed to cancel order');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = '<i class="fas fa-trash-alt"></i> Cancel Order';
+            }
+        });
+    }
+
     // Fetch orders immediately when the tab is loaded
     const orderAllocationTab = document.getElementById('orderallocation');
     if (orderAllocationTab) {
@@ -27,6 +102,9 @@ document.addEventListener('DOMContentLoaded', function() {
                     if (isVisible) {
                         if (typeof window.fetchExistingOrders === 'function') {
                             window.fetchExistingOrders();
+                        }
+                        if (typeof window.fetchOrderSummary === 'function') {
+                            window.fetchOrderSummary();
                         }
                     }
                 }
@@ -43,6 +121,9 @@ document.addEventListener('DOMContentLoaded', function() {
             setTimeout(() => {
                 if (typeof window.fetchExistingOrders === 'function') {
                     window.fetchExistingOrders();
+                }
+                if (typeof window.fetchOrderSummary === 'function') {
+                    window.fetchOrderSummary();
                 }
             }, 0);
         }
@@ -505,14 +586,16 @@ document.addEventListener('DOMContentLoaded', function() {
                     if (p.project_id && p.project_name) {
                         projectMap.set(p.project_id.toString(), p.project_name);
                     }
-                    (p.client_code || '').split('|').forEach(c => {
-                        const code = c.trim();
-                        if (code && !clientCodes.includes(code)) clientCodes.push(code);
-                    });
-                    (p.worktypes || '').split('|').forEach(w => {
-                        const wt = w.trim();
-                        if (wt && !workTypes.includes(wt)) workTypes.push(wt);
-                    });
+                    if ((p.project_name || '').toLowerCase().includes('title search')) {
+                        (p.client_code || '').split('|').forEach(c => {
+                            const code = c.trim();
+                            if (code && !clientCodes.includes(code)) clientCodes.push(code);
+                        });
+                        (p.worktypes || '').split('|').forEach(w => {
+                            const wt = w.trim();
+                            if (wt && !workTypes.includes(wt)) workTypes.push(wt);
+                        });
+                    }
                 });
                 if (data.length > 0) {
                     const def = data.find(p => (p.project_name || '').toLowerCase().includes('title')) || data[0];
@@ -579,7 +662,21 @@ document.addEventListener('DOMContentLoaded', function() {
             if (employees.data) employees = employees.data;
             if (!Array.isArray(employees)) return;
             employees.forEach(emp => {
-                employeeMap.set(emp.employee_id.toString(), emp.name);
+                const empId = emp.employee_id.toString();
+                employeeMap.set(empId, emp.name);
+                
+                let isTitleSearch = false;
+                if (Array.isArray(emp.project_names) && emp.project_names.some(p => p.toLowerCase().includes('title search'))) {
+                    isTitleSearch = true;
+                } else if (typeof emp.projects === 'string' && emp.projects.toLowerCase().includes('title search')) {
+                    isTitleSearch = true;
+                } else if (typeof emp.project === 'string' && emp.project.toLowerCase().includes('title search')) {
+                    isTitleSearch = true;
+                }
+                
+                if (isTitleSearch) {
+                    titleSearchEmployeeMap.set(empId, emp.name);
+                }
             });
         })
         .catch(error => console.error('Error fetching employees:', error));
@@ -797,9 +894,9 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
             // Map the old UI fields to the new DRF backend schema.
-            // employee_id is intentionally omitted — order is created unassigned.
+            // employee_id is intentionally omitted - order is created unassigned.
+            // allocation_id is omitted so the backend automatically generates a collision-free ID.
             const mappedData = {
-                allocation_id: orderData.task_id,
                 project: orderData.project,
                 client_code: orderData.client_code,
                 work_type: orderData.work_type,
@@ -886,7 +983,8 @@ document.addEventListener('DOMContentLoaded', function() {
             .then(response => {
                 if (!response.ok) {
                     return response.json().then(data => {
-                        throw new Error(data.error || 'Failed to allocate task');
+                        const errMsg = (data.error && data.error.message) ? data.error.message : (data.message || data.detail || 'Error allocating task');
+                        throw new Error(errMsg);
                     });
                 }
                 return response.json();
@@ -923,6 +1021,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // Shared employee map: populated by the MasterDataCache fetch inside
     // initializeOrderAllocationForm() and consumed by inlineAssignEmployee().
     const employeeMap = new Map();
+    const titleSearchEmployeeMap = new Map();
 
     // State for allocation table pagination and search
     const allocationState = {
@@ -1038,7 +1137,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const totalItems = allocationState.filteredOrders.length;
         if (totalItems === 0) {
-            resultsContainer.innerHTML = '<tr><td colspan="10" class="no-data">No orders allocated yet</td></tr>';
+            resultsContainer.innerHTML = '<tr><td colspan="11" class="no-data">No orders allocated yet</td></tr>';
             if (paginationInfo) paginationInfo.textContent = 'Showing 0 to 0 of 0 entries';
             if (paginationBtns) paginationBtns.innerHTML = '';
             return;
@@ -1057,13 +1156,13 @@ document.addEventListener('DOMContentLoaded', function() {
             paginationInfo.textContent = `Showing ${startIdx + 1} to ${endIdx} of ${totalItems} entries`;
         }
 
-        const ordersList = pageItems.map(order => {
+        // Build an individual order <tr> row
+        function getOrderRow(order) {
             if (!order) return '';
-
             const taskId = order.taskId || order.task_id || order.allocation_id || '-';
             const clientCodeVal = order.client_code || order.clientCode || '-';
-            const clientCode = (window.clientCodeMap && window.clientCodeMap.has(clientCodeVal) && window.clientCodeMap.get(clientCodeVal)) 
-                               ? window.clientCodeMap.get(clientCodeVal) 
+            const clientCode = (window.clientCodeMap && window.clientCodeMap.has(clientCodeVal) && window.clientCodeMap.get(clientCodeVal))
+                               ? window.clientCodeMap.get(clientCodeVal)
                                : clientCodeVal;
             const workType = order.work_type || order.workType || '-';
             const batchId = order.batch_id || order.batchId || order.batch || '-';
@@ -1076,11 +1175,9 @@ document.addEventListener('DOMContentLoaded', function() {
             const employeeName = order.employee_name || employeeMap.get(employeeId.toString()) || employeeId || '';
             const status = order.status || 'Pending';
 
-            // Build the "Assigned To" and "Assign QC To" cells.
-            // Completed/cancelled orders: plain non-clickable text to prevent 409 on reassign.
-            // All other orders: clickable trigger that opens the inline dropdown.
-            const isFinalState = status.toLowerCase() === 'completed' || status.toLowerCase() === 'cancelled' || status.toLowerCase() === 'dispatch';
-            const assignedToCell = isFinalState
+            const isOrderFinished = status.toLowerCase() === 'cancelled' || status.toLowerCase() === 'dispatch';
+            const isSearchCompleted = isOrderFinished || status.toLowerCase() === 'completed' || status.toLowerCase() === 'ready_for_qc' || status.toLowerCase() === 'qc_in_progress';
+            const assignedToCell = isSearchCompleted
                 ? `<span style="font-size:12px;color:#6b7280;">${employeeName || '-'}</span>`
                 : (employeeId
                     ? `<span class="oa-assign-trigger oa-assigned" data-task-id="${taskId}" data-assign-type="employee" title="Click to reassign">
@@ -1092,7 +1189,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
             const qcId = order.qc_id || order.qcId || '';
             const qcName = order.qc_name || employeeMap.get(qcId.toString()) || qcId || '';
-            const qcToCell = isFinalState
+            const qcToCell = isOrderFinished
                 ? `<span style="font-size:12px;color:#6b7280;">${qcName || '-'}</span>`
                 : (qcId
                     ? `<span class="oa-assign-trigger oa-assigned" data-task-id="${taskId}" data-assign-type="qc" title="Click to assign QC">
@@ -1122,9 +1219,176 @@ document.addEventListener('DOMContentLoaded', function() {
                     </td>
                 </tr>
             `;
-        }).filter(row => row).join('');
+        }
 
-        resultsContainer.innerHTML = ordersList;
+        // Group page items by client_code, preserving first-seen order
+        const groups = {};
+        const groupOrder = [];
+        pageItems.forEach(order => {
+            const codeVal = order.client_code || order.clientCode || '-';
+            if (!groups[codeVal]) {
+                groups[codeVal] = [];
+                groupOrder.push(codeVal);
+            }
+            groups[codeVal].push(order);
+        });
+
+        let html = '';
+        groupOrder.forEach(codeVal => {
+            const orders = groups[codeVal];
+            const clientName = (window.clientCodeMap && window.clientCodeMap.has(codeVal) && window.clientCodeMap.get(codeVal))
+                               ? window.clientCodeMap.get(codeVal)
+                               : codeVal;
+
+            const total = orders.length;
+            const assigned = orders.filter(o => !!(o.employee_id || o.employeeId || '')).length;
+            const notAssigned = total - assigned;
+            const completed = orders.filter(o => {
+                const s = (o.status || '').toLowerCase();
+                return s === 'completed' || s === 'dispatch';
+            }).length;
+            const dispatched = orders.filter(o => (o.status || '').toLowerCase() === 'dispatch').length;
+            const cancelled = orders.filter(o => {
+                const s = (o.status || '').toLowerCase();
+                return s === 'cancelled' || s === 'on_hold';
+            }).length;
+            const searcherDone = orders.filter(o => {
+                const s = (o.status || '').toLowerCase();
+                return s === 'ready_for_qc' || s === 'qc_in_progress' || s === 'completed' || s === 'dispatch';
+            }).length;
+
+            const groupId = `client-group-${codeVal.replace(/[^a-zA-Z0-9]/g, '_')}`;
+
+            html += `
+                <tr class="client-group-header" data-group="${groupId}" style="background:#f0f4ff; border-left: 4px solid #4f46e5;">
+                    <td colspan="11" style="padding: 10px 14px; border-left: 4px solid #4f46e5;">
+                        <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+                            <span style="font-size:14px; font-weight:700; color:#1e1b4b; display:flex; align-items:center; gap:6px; min-width:130px; white-space:nowrap;">
+                                <i class="fas fa-building" style="color:#4f46e5;"></i> ${clientName}
+                                <i class="fas fa-chevron-down client-group-chevron" style="font-size:10px; margin-left:4px; color:#6b7280; transition:transform 0.25s;"></i>
+                            </span>
+                            <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; font-size:13px;">
+                                <span class="client-filter-badge" data-group="${groupId}" data-filter="all" style="background:#e0e7ff; color:#3730a3; border-radius:20px; padding:4px 14px; font-weight:600; white-space:nowrap; cursor:pointer; transition:box-shadow 0.15s;">
+                                    <i class="fas fa-inbox" style="margin-right:4px;"></i>Received: ${total}
+                                </span>
+                                <span class="client-filter-badge" data-group="${groupId}" data-filter="assigned" style="background:#dbeafe; color:#1d4ed8; border-radius:20px; padding:4px 14px; font-weight:600; white-space:nowrap; cursor:pointer; transition:box-shadow 0.15s;">
+                                    <i class="fas fa-user-check" style="margin-right:4px;"></i>Assigned: ${assigned}
+                                </span>
+                                <span class="client-filter-badge" data-group="${groupId}" data-filter="unassigned" style="background:#fee2e2; color:#b91c1c; border-radius:20px; padding:4px 14px; font-weight:600; white-space:nowrap; cursor:pointer; transition:box-shadow 0.15s;">
+                                    <i class="fas fa-user-slash" style="margin-right:4px;"></i>Unassigned: ${notAssigned}
+                                </span>
+                                <span class="client-filter-badge" data-group="${groupId}" data-filter="searcher_done" style="background:#fef3c7; color:#92400e; border-radius:20px; padding:4px 14px; font-weight:600; white-space:nowrap; cursor:pointer; transition:box-shadow 0.15s;">
+                                    <i class="fas fa-search" style="margin-right:4px;"></i>Searcher Done: ${searcherDone}
+                                </span>
+                                <span class="client-filter-badge" data-group="${groupId}" data-filter="completed" style="background:#ede9fe; color:#5b21b6; border-radius:20px; padding:4px 14px; font-weight:600; white-space:nowrap; cursor:pointer; transition:box-shadow 0.15s;">
+                                    <i class="fas fa-check-double" style="margin-right:4px;"></i>Search Complete: ${completed}
+                                </span>
+                                <span class="client-filter-badge" data-group="${groupId}" data-filter="dispatched" style="background:#d1fae5; color:#065f46; border-radius:20px; padding:4px 14px; font-weight:600; white-space:nowrap; cursor:pointer; transition:box-shadow 0.15s;">
+                                    <i class="fas fa-paper-plane" style="margin-right:4px;"></i>Dispatched: ${dispatched}
+                                </span>
+                                <span class="client-filter-badge" data-group="${groupId}" data-filter="cancelled" style="background:#f1f5f9; color:#475569; border-radius:20px; padding:4px 14px; font-weight:600; white-space:nowrap; cursor:pointer; transition:box-shadow 0.15s;">
+                                    <i class="fas fa-ban" style="margin-right:4px;"></i>Cancelled/Hold: ${cancelled}
+                                </span>
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+            `;
+
+            orders.forEach(order => { html += getOrderRow(order); });
+        });
+
+        resultsContainer.innerHTML = html;
+
+        // ── Badge filter: click a pill to show only matching order rows for that client ──
+        const activeFilters = {}; // groupId -> currently active filter
+
+        function applyGroupFilter(groupId, filter) {
+            const headerRow = resultsContainer.querySelector(`.client-group-header[data-group="${groupId}"]`);
+            if (!headerRow) return;
+
+            // Toggle: clicking the active filter again resets to 'all'
+            if (activeFilters[groupId] === filter && filter !== 'all') {
+                filter = 'all';
+            }
+            activeFilters[groupId] = filter;
+
+            // Update badge active state
+            resultsContainer.querySelectorAll(`.client-filter-badge[data-group="${groupId}"]`).forEach(badge => {
+                const isActive = badge.dataset.filter === filter;
+                badge.style.outline = isActive && filter !== 'all' ? '2px solid currentColor' : 'none';
+                badge.style.outlineOffset = '1px';
+            });
+
+            // Show/hide order rows for this group
+            let sibling = headerRow.nextElementSibling;
+            while (sibling && !sibling.classList.contains('client-group-header')) {
+                const status = (sibling.querySelector('.status-badge')?.textContent || '').trim().toLowerCase().replace(/\s+/g, '_');
+                const empCell = sibling.querySelector('.oa-assign-cell[data-assign-type="employee"]');
+                const hasEmployee = empCell && empCell.dataset.employeeId && empCell.dataset.employeeId.trim() !== '';
+
+                let visible = false;
+                switch (filter) {
+                    case 'all':
+                        visible = true;
+                        break;
+                    case 'assigned':
+                        visible = hasEmployee;
+                        break;
+                    case 'unassigned':
+                        visible = !hasEmployee;
+                        break;
+                    case 'searcher_done':
+                        visible = ['ready_for_qc', 'qc_in_progress', 'search_complete', 'completed', 'dispatch'].some(s => status.includes(s));
+                        break;
+                    case 'completed':
+                        visible = status.includes('search_complete') || status.includes('completed') || status.includes('dispatch');
+                        break;
+                    case 'dispatched':
+                        visible = status.includes('dispatch');
+                        break;
+                    case 'cancelled':
+                        visible = status.includes('cancelled') || status.includes('on_hold') || status.includes('hold');
+                        break;
+                    default:
+                        visible = true;
+                }
+
+                sibling.style.display = visible ? '' : 'none';
+                sibling = sibling.nextElementSibling;
+            }
+        }
+
+        resultsContainer.querySelectorAll('.client-filter-badge').forEach(badge => {
+            badge.addEventListener('click', (e) => {
+                e.stopPropagation();
+                applyGroupFilter(badge.dataset.group, badge.dataset.filter);
+            });
+        });
+
+        resultsContainer.querySelectorAll('.client-group-chevron').forEach(chevron => {
+            // Make it look clickable
+            chevron.style.cursor = 'pointer';
+            chevron.style.padding = '4px 6px';
+            chevron.style.borderRadius = '4px';
+
+            chevron.addEventListener('mouseenter', () => { chevron.style.background = 'rgba(79,70,229,0.12)'; });
+            chevron.addEventListener('mouseleave', () => { chevron.style.background = ''; });
+
+            chevron.addEventListener('click', (e) => {
+                e.stopPropagation(); // prevent any parent row handlers
+                const headerRow = chevron.closest('.client-group-header');
+                if (!headerRow) return;
+                let sibling = headerRow.nextElementSibling;
+                let collapsed = null;
+                while (sibling && !sibling.classList.contains('client-group-header')) {
+                    if (collapsed === null) collapsed = sibling.style.display !== 'none';
+                    sibling.style.display = collapsed ? 'none' : '';
+                    sibling = sibling.nextElementSibling;
+                }
+                chevron.style.transform = collapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
+            });
+        });
 
         if (paginationBtns) {
             renderPaginationButtons(paginationBtns, allocationState.currentPage, totalPages);
@@ -1148,11 +1412,13 @@ document.addEventListener('DOMContentLoaded', function() {
         const currentEmployeeId = cell.dataset.employeeId || '';
 
         // Build employee options from the cached map.
-        const options = Array.from(employeeMap.entries())
+        const targetMap = titleSearchEmployeeMap.size > 0 ? titleSearchEmployeeMap : employeeMap;
+        const options = Array.from(targetMap.entries())
             .sort((a, b) => a[1].localeCompare(b[1]))
             .map(([id, name]) =>
                 `<option value="${id}" ${id === currentEmployeeId ? 'selected' : ''}>${name} (${id})</option>`
             ).join('');
+
 
         // Replace cell contents with inline form.
         const originalHTML = cell.innerHTML;
@@ -1237,6 +1503,33 @@ document.addEventListener('DOMContentLoaded', function() {
                 const row = cell.closest('tr.order-row');
                 if (assignType === 'employee' && row) {
                     row.dataset.employeeId = newEmpId;
+                }
+
+                // If QC was assigned, update status badge if status changed (e.g. completed -> ready_for_qc)
+                const updatedStatus = data.data?.status || data.status;
+                if (updatedStatus && row) {
+                    const statusBadgeEl = row.querySelector('.status-cell .status-badge');
+                    if (statusBadgeEl) {
+                        statusBadgeEl.className = `status-badge ${updatedStatus.toLowerCase()}`;
+                        statusBadgeEl.textContent = formatStatusDisplay(updatedStatus);
+                    }
+                }
+
+                // Keep allocationState up to date if available
+                if (typeof allocationState !== 'undefined' && allocationState.allOrders) {
+                    const existingOrder = allocationState.allOrders.find(o => 
+                        (o.allocation_id || o.order_id || o.taskId || o.id) == taskId
+                    );
+                    if (existingOrder) {
+                        if (assignType === 'qc') {
+                            existingOrder.qc_id = newEmpId;
+                            existingOrder.qc_name = newEmpName;
+                            if (updatedStatus) existingOrder.status = updatedStatus;
+                        } else {
+                            existingOrder.employee_id = newEmpId;
+                            existingOrder.employee_name = newEmpName;
+                        }
+                    }
                 }
 
                 // Send chat notification to the newly assigned employee.
@@ -1377,7 +1670,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (!cell || !taskId) return;
 
                 // Toggle: close if already open
-                const existingMenu = cell.querySelector('.status-action-menu');
+                const existingMenu = document.querySelector(`.status-action-menu[data-task-id="${taskId}"]`);
                 if (existingMenu) {
                     existingMenu.remove();
                     return;
@@ -1388,42 +1681,82 @@ document.addEventListener('DOMContentLoaded', function() {
                 // Build menu
                 const menu = document.createElement('div');
                 menu.className = 'status-action-menu';
+                menu.setAttribute('data-task-id', taskId);
                 const cancelBtn = document.createElement('button');
                 cancelBtn.className = 'status-action-item danger';
                 cancelBtn.innerHTML = '<i class="fas fa-ban"></i> Cancel order';
                 menu.appendChild(cancelBtn);
-                cell.appendChild(menu);
+                
+                document.body.appendChild(menu);
+                
+                // Position it relative to the viewport + scroll
+                const rect = badge.getBoundingClientRect();
+                const scrollTop = window.scrollY || document.documentElement.scrollTop;
+                const scrollLeft = window.scrollX || document.documentElement.scrollLeft;
+                
+                menu.style.top = (rect.bottom + scrollTop + 6) + 'px';
+                menu.style.left = (rect.left + scrollLeft) + 'px';
+                menu.style.zIndex = '999999';
 
                 // Handle cancel action
                 cancelBtn.addEventListener('click', async (ev) => {
-                    ev.stopPropagation();
-                    ev.preventDefault();
-                    const ok = window.confirm('Are you sure you want to cancel this order? This cannot be undone.');
-                    if (!ok) return;
-                    cancelBtn.disabled = true;
                     try {
-                        // Use the DRF cancel action endpoint.
-                        const resp = await fetch(`/api/v1/allocations/${encodeURIComponent(taskId)}/cancel/`, {
-                            method: 'POST',
-                            headers: { 
-                                'Content-Type': 'application/json',
-                                'X-CSRFToken': (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || ''
-                            },
-                            body: JSON.stringify({})
-                        });
-                        const data = await resp.json().catch(() => ({}));
-                        // DRF envelope: { ok: true, data: {...} }
-                        if (!resp.ok || !data.ok) {
-                            throw new Error(data.error || data.detail || `Failed to cancel (HTTP ${resp.status})`);
+                        ev.stopPropagation();
+                        ev.preventDefault();
+                        
+                        // Fallback logic
+                        const doFallback = async () => {
+                            const reason = window.prompt('Please provide a reason for cancelling this order:');
+                            if (reason === null) return;
+                            if (reason.trim() === '') {
+                                alert('A cancellation reason is required.');
+                                return;
+                            }
+                            
+                            cancelBtn.disabled = true;
+                            try {
+                                const resp = await fetch(`/api/v1/allocations/${encodeURIComponent(taskId)}/cancel/`, {
+                                    method: 'POST',
+                                    headers: { 
+                                        'Content-Type': 'application/json',
+                                        'X-CSRFToken': (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || ''
+                                    },
+                                    body: JSON.stringify({ reason: reason.trim() })
+                                });
+                                const data = await resp.json().catch(() => ({}));
+                                if (!resp.ok || !data.ok) {
+                                    throw new Error(data.error || data.detail || `Failed to cancel (HTTP ${resp.status})`);
+                                }
+                                badge.className = 'status-badge cancelled';
+                                badge.textContent = 'Cancelled';
+                                document.querySelectorAll('.status-action-menu').forEach(m => m.remove());
+                            } catch (err) {
+                                console.error('Cancel order failed:', err);
+                                alert(err.message || 'Failed to cancel order');
+                                cancelBtn.disabled = false;
+                            }
+                        };
+                        
+                        if (cancelModal) {
+                            currentCancelTaskId = taskId;
+                            currentCancelBadge = badge;
+                            currentCancelBtn = cancelBtn;
+                            cancelBtn.disabled = true; // prevent double clicks while modal opens
+                            
+                            cancelModal.classList.remove('hidden');
+                            cancelModal.style.display = 'flex';
+                            if (cancelReasonInput) {
+                                cancelReasonInput.focus();
+                            }
+                            
+                            // Close the dropdown menu but keep state
+                            document.querySelectorAll('.status-action-menu').forEach(m => m.remove());
+                        } else {
+                            doFallback();
                         }
-                        // Update badge UI
-                        badge.className = 'status-badge cancelled';
-                        badge.textContent = 'Cancelled';
-                        closeOpenStatusMenus();
-                    } catch (err) {
-                        console.error('Cancel order failed:', err);
-                        alert(err.message || 'Failed to cancel order');
-                        cancelBtn.disabled = false;
+                    } catch (e) {
+                        alert("Error showing modal: " + e.message);
+                        console.error("Cancel button error:", e);
                     }
                 });
             });
@@ -1465,45 +1798,22 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function renderHistoryTable(history) {
-        function pad(v) { return String(v).padStart(2, '0'); }
-        function formatFromSeconds(totalSeconds) {
-            if (!totalSeconds || totalSeconds <= 0) return '-';
-            const hours = Math.floor(totalSeconds / 3600);
-            const minutes = Math.floor((totalSeconds % 3600) / 60);
-            const seconds = totalSeconds % 60;
-            return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
-        }
-
-        const historyWithStatus = (() => {
-            const lastByType = {};
-            return history.map(h => {
-                let status = h.status || '';
-                const wt = h.work_type;
-                const toNameOrId = h.assigned_to_name || h.assigned_to || '';
-                if (!status && wt) {
-                    if (lastByType.hasOwnProperty(wt) && lastByType[wt] !== toNameOrId) {
-                        status = 'Reassigned';
-                    }
-                    lastByType[wt] = toNameOrId;
-                }
-                return { ...h, status };
-            });
-        })();
-
-        const rows = historyWithStatus.map(h => {
-            const assignedOn = h.assigned_on ? new Date(h.assigned_on.replace(' ', 'T')).toLocaleString() : '-';
-            const total = (h.total_time_seconds || 0);
-            const totalFmt = formatFromSeconds(total);
-            const assignedTo = h.assigned_to_name || h.assigned_to || '-';
-            const assignedBy = h.assigned_by_name || h.assigned_by || '-';
+        const rows = history.map(h => {
+            const dateStr = h.created_at ? new Date(h.created_at).toLocaleString() : '-';
+            const action = h.action ? h.action.replace(/_/g, ' ') : '-';
+            const employee = employeeMap.get(h.employee_id) || h.employee_id || '-';
+            const performedBy = employeeMap.get(h.performed_by) || h.performed_by || '-';
+            const statusStr = formatStatusDisplay(h.to_status) || '-';
+            const remarks = h.remarks ? h.remarks.replace(/\n/g, '<br>') : '-';
+            
             return `
                 <tr>
-                    <td>${h.work_type || '-'}</td>
-                    <td>${assignedTo}</td>
-                    <td>${assignedBy}</td>
-                    <td>${assignedOn}</td>
-                    <td>${totalFmt}</td>
-                    <td>${formatStatusDisplay(h.status)}</td>
+                    <td style="text-transform: capitalize;">${action}</td>
+                    <td>${employee}</td>
+                    <td>${performedBy}</td>
+                    <td>${dateStr}</td>
+                    <td>${statusStr}</td>
+                    <td>${remarks}</td>
                 </tr>
             `;
         }).join('');
@@ -1512,12 +1822,12 @@ document.addEventListener('DOMContentLoaded', function() {
             <table class="allocation-history-table">
                 <thead>
                     <tr>
-                        <th>Work Type</th>
+                        <th>Action</th>
                         <th>Assigned To</th>
-                        <th>Assigned By</th>
-                        <th>Assigned On</th>
-                        <th>Total Time</th>
-                        <th>Status</th>
+                        <th>Performed By</th>
+                        <th>Date</th>
+                        <th>New Status</th>
+                        <th>Remarks</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -1537,8 +1847,11 @@ document.addEventListener('DOMContentLoaded', function() {
         const dispatchDate = order.dispatch_date ? new Date(order.dispatch_date).toLocaleString() : '-';
         
         const statusStr = order.status || 'Pending';
-        const isFinalState = statusStr.toLowerCase() === 'completed' || statusStr.toLowerCase() === 'cancelled' || statusStr.toLowerCase() === 'dispatch';
-        const editableClass = isFinalState ? '' : 'editable';
+        const statusStrLower = statusStr.toLowerCase();
+        const isOrderFinished = statusStrLower === 'cancelled' || statusStrLower === 'dispatch';
+        const isSearchCompleted = isOrderFinished || ['completed', 'ready_for_qc', 'qc_in_progress'].includes(statusStrLower);
+        const editableSearcherClass = isSearchCompleted ? '' : 'editable';
+        const editableQcClass = isOrderFinished ? '' : 'editable';
         // Remove any existing popups
         const existingPopup = document.querySelector('.oa-details-popup');
         if (existingPopup) {
@@ -1647,15 +1960,25 @@ document.addEventListener('DOMContentLoaded', function() {
                             <div class="oa-detail-label">Property Address</div>
                             <div class="oa-detail-value">${order.property_address || '-'}</div>
                         </div>
-                        <div class="oa-detail-item">
+                        <div class="oa-detail-item editable">
                             <div class="oa-detail-label">State</div>
-                            <div class="oa-detail-value">${order.state || '-'}</div>
+                            <div class="oa-detail-value">
+                                <select class="oa-edit-state" style="display: none; width: 100%; border: 1px solid #ccc; border-radius: 4px; padding: 4px;">
+                                    <option value="${order.state || ''}">${order.state || 'Select State'}</option>
+                                </select>
+                                <span class="oa-display-value">${order.state || '-'}</span>
+                            </div>
                         </div>
-                        <div class="oa-detail-item">
+                        <div class="oa-detail-item editable">
                             <div class="oa-detail-label">County</div>
-                            <div class="oa-detail-value">${order.county || '-'}</div>
+                            <div class="oa-detail-value">
+                                <select class="oa-edit-county" style="display: none; width: 100%; border: 1px solid #ccc; border-radius: 4px; padding: 4px;">
+                                    <option value="${order.county || ''}">${order.county || 'Select County'}</option>
+                                </select>
+                                <span class="oa-display-value">${order.county || '-'}</span>
+                            </div>
                         </div>
-                        <div class="oa-detail-item ${editableClass}">
+                        <div class="oa-detail-item ${editableSearcherClass}">
                             <div class="oa-detail-label">Assigned To</div>
                             <div class="oa-detail-value">
                                 <select class="oa-edit-employee" style="display: none;">
@@ -1664,7 +1987,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                 <span class="oa-display-value">${order.employeeName || '-'}</span>
                             </div>
                         </div>
-                        <div class="oa-detail-item ${editableClass}">
+                        <div class="oa-detail-item ${editableQcClass}">
                             <div class="oa-detail-label">Assign QC To</div>
                             <div class="oa-detail-value">
                                 <select class="oa-edit-qc" style="display: none;">
@@ -1713,9 +2036,15 @@ document.addEventListener('DOMContentLoaded', function() {
                         </div>
 
                         <div class="oa-detail-item">
-                            <div class="oa-detail-label">Time Taken</div>
+                            <div class="oa-detail-label">Search Time</div>
                             <div class="oa-detail-value">
-                                <span class="oa-display-value">${order.time_taken || '-'}</span>
+                                <span class="oa-display-value">${order.search_time_taken || '-'}</span>
+                            </div>
+                        </div>
+                        <div class="oa-detail-item">
+                            <div class="oa-detail-label">QC Time</div>
+                            <div class="oa-detail-value">
+                                <span class="oa-display-value">${order.qc_time_taken || '-'}</span>
                             </div>
                         </div>
                         <div class="oa-detail-item">
@@ -1834,26 +2163,79 @@ document.addEventListener('DOMContentLoaded', function() {
         // Load order types for dropdown
         fetch('/api/v1/allocations/rates/order_types/')
             .then(response => response.json())
-            .then(orderTypes => {
-                const orderTypeSelect = popup.querySelector('.oa-edit-ordertype');
-                orderTypeSelect.innerHTML = orderTypes.map(type => 
-                    `<option value="${type}" ${type === order.order_details ? 'selected' : ''}>
-                        ${type}
-                    </option>`
-                ).join('');
+            .then(data => {
+                const orderTypes = data.data || data;
+                if (Array.isArray(orderTypes)) {
+                    const orderTypeSelect = popup.querySelector('.oa-edit-ordertype');
+                    orderTypeSelect.innerHTML = orderTypes.map(type => 
+                        `<option value="${type}" ${type === order.order_id || type === order.order_details ? 'selected' : ''}>
+                            ${type}
+                        </option>`
+                    ).join('');
+                }
             });
+
+        // Helper function to load states for modal
+        const loadModalStates = (orderType, selectedState) => {
+            const stateSelect = popup.querySelector('.oa-edit-state');
+            if (orderType) {
+                MasterDataCache.getOrFetch(`oa_states_${orderType}`, `/api/v1/allocations/rates/states/${orderType}/`)
+                    .then(states => {
+                        stateSelect.innerHTML = '<option value="">Select State</option>' +
+                            states.map(state => `<option value="${state}" ${state === selectedState ? 'selected' : ''}>${state}</option>`).join('');
+                    })
+                    .catch(error => console.error('Error loading states:', error));
+            }
+        };
+
+        // Helper function to load counties for modal
+        const loadModalCounties = (orderType, state, selectedCounty) => {
+            const countySelect = popup.querySelector('.oa-edit-county');
+            if (orderType && state) {
+                MasterDataCache.getOrFetch(`oa_counties_${orderType}_${state}`, `/api/v1/allocations/rates/counties/${orderType}/${encodeURIComponent(state)}/`)
+                    .then(counties => {
+                        countySelect.innerHTML = '<option value="">Select County</option>' +
+                            counties.map(county => `<option value="${county}" ${county === selectedCounty ? 'selected' : ''}>${county}</option>`).join('');
+                    })
+                    .catch(error => console.error('Error loading counties:', error));
+            }
+        };
+
+        // Initial load for State and County
+        const currentOrderType = order.order_id || order.order_details;
+        if (currentOrderType) {
+            loadModalStates(currentOrderType, order.state);
+            loadModalCounties(currentOrderType, order.state, order.county);
+        }
+
+        // Add event listeners for cascading dropdowns
+        popup.querySelector('.oa-edit-ordertype').addEventListener('change', function() {
+            loadModalStates(this.value, '');
+            popup.querySelector('.oa-edit-county').innerHTML = '<option value="">Select County</option>';
+        });
+
+        popup.querySelector('.oa-edit-state').addEventListener('change', function() {
+            const orderType = popup.querySelector('.oa-edit-ordertype').value;
+            loadModalCounties(orderType, this.value, '');
+        });
 
         // Load work types for dropdown
         fetch('/api/v1/masters/projects/')
             .then(response => response.json())
             .then(data => {
-                if (data.work_types && Array.isArray(data.work_types)) {
-                    const workTypeSelect = popup.querySelector('.oa-edit-worktype');
-                    workTypeSelect.innerHTML = data.work_types.map(type => 
-                        `<option value="${type}" ${type === order.work_type ? 'selected' : ''}>
-                            ${type}
-                        </option>`
-                    ).join('');
+                const projects = data.data || data;
+                if (Array.isArray(projects)) {
+                    const projName = (order.projectName || order.project || '').toLowerCase();
+                    const matchedProject = projects.find(p => (p.project_name || '').toLowerCase() === projName || (p.project_id || '').toLowerCase() === projName);
+                    if (matchedProject && matchedProject.worktypes) {
+                        const workTypes = [...new Set(matchedProject.worktypes.split('|').filter(t => t.trim()))];
+                        const workTypeSelect = popup.querySelector('.oa-edit-worktype');
+                        workTypeSelect.innerHTML = workTypes.map(type => 
+                            `<option value="${type}" ${type === order.work_type ? 'selected' : ''}>
+                                ${type}
+                            </option>`
+                        ).join('');
+                    }
                 }
             })
             .catch(error => {
@@ -1933,7 +2315,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         // Handle edit button click
         editBtn.addEventListener('click', function() {
-            popup.querySelectorAll('.oa-edit-employee, .oa-edit-qc, .oa-edit-worktype, .oa-edit-ordertype, .oa-edit-searchtype, .oa-edit-remarks, .oa-edit-qccomments, .oa-edit-eta, .oa-edit-general-instructions').forEach(el => {
+            popup.querySelectorAll('.oa-edit-employee, .oa-edit-qc, .oa-edit-worktype, .oa-edit-ordertype, .oa-edit-searchtype, .oa-edit-remarks, .oa-edit-qccomments, .oa-edit-eta, .oa-edit-general-instructions, .oa-edit-state, .oa-edit-county').forEach(el => {
                 el.style.display = 'block';
             });
             // Show the fees edit controls container
@@ -1973,7 +2355,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 qc_comments: popup.querySelector('.oa-edit-qccomments') ? popup.querySelector('.oa-edit-qccomments').value || '' : '',
                 qc_id: popup.querySelector('.oa-edit-qc') ? popup.querySelector('.oa-edit-qc').value || '' : '',
                 qc_name: popup.querySelector('.oa-edit-qc') ? (popup.querySelector('.oa-edit-qc').options[popup.querySelector('.oa-edit-qc').selectedIndex]?.text || '').replace('Select QC', '') : '',
-                fees: searchTypeSelect.value === 'Ground' ? vendorRatesSelect.value : feesInput.value
+                fees: searchTypeSelect.value === 'Ground' ? vendorRatesSelect.value : feesInput.value,
+                state: popup.querySelector('.oa-edit-state').value || '',
+                county: popup.querySelector('.oa-edit-county').value || ''
             };
             // Handle ETA
             const etaInput = popup.querySelector('.oa-edit-eta');
@@ -2015,7 +2399,8 @@ document.addEventListener('DOMContentLoaded', function() {
             .then(response => {
                 if (!response.ok) {
                     return response.json().then(data => {
-                        throw new Error(data.error || data.detail || 'Failed to update order');
+                        const errMsg = (data.error && data.error.message) ? data.error.message : (data.message || data.detail || 'Error allocating task');
+                        throw new Error(errMsg);
                     });
                 }
                 return response.json();
@@ -2287,7 +2672,13 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         try {
-            const response = await fetch('/api/v1/allocations/');
+            const dateInput = document.getElementById('allocationDateFilter');
+            let query = '';
+            if (dateInput && dateInput.value) {
+                query = `?date=${encodeURIComponent(dateInput.value)}`;
+            }
+            
+            const response = await fetch(`/api/v1/allocations/${query}`);
             const data = await response.json();
             
             if (response.ok) {
@@ -2320,6 +2711,85 @@ document.addEventListener('DOMContentLoaded', function() {
     // Make fetchExistingOrders available globally
     window.fetchExistingOrders = fetchExistingOrders;
 
+    window.fetchOrderSummary = async function fetchOrderSummary(isManualRefresh = false) {
+        try {
+            const summaryDateInput = document.getElementById('summaryDateFilter');
+            let query = '';
+            if (summaryDateInput && summaryDateInput.value) {
+                query = `?date=${encodeURIComponent(summaryDateInput.value)}`;
+            }
+            
+            const response = await fetch(`/api/v1/allocations/summary/${query}`);
+            const data = await response.json();
+            
+            if (response.ok) {
+                const tbody = document.getElementById('summary-table-body');
+                if (!tbody) return;
+                
+                tbody.innerHTML = '';
+                const results = data.data || data;
+                
+                if (!results || results.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="8" style="text-align: center;">No orders found for this date.</td></tr>`;
+                    return;
+                }
+                
+                results.forEach(item => {
+                    const tr = document.createElement('tr');
+                    tr.style.cursor = 'pointer';
+                    
+                    // Add click event to filter main table
+                    tr.addEventListener('click', () => {
+                        const searchInput = document.getElementById('allocationSearchInput');
+                        if (searchInput) {
+                            searchInput.value = item.client_name || item.client_code;
+                            // Trigger search
+                            const inputEvent = new Event('input', { bubbles: true });
+                            searchInput.dispatchEvent(inputEvent);
+                            
+                            // Scroll to main table
+                            document.querySelector('.allocation-table').scrollIntoView({ behavior: 'smooth' });
+                        }
+                    });
+                    
+                    tr.innerHTML = `
+                        <td style="font-weight: 500;">${item.client_name || item.client_code}</td>
+                        <td><span class="badge" style="background: #e2e8f0; color: #475569;">${item.total}</span></td>
+                        <td><span class="badge" style="background: #dbeafe; color: #1e40af;">${item.assigned}</span></td>
+                        <td><span class="badge" style="background: #fee2e2; color: #b91c1c;">${item.not_assigned}</span></td>
+                        <td><span class="badge" style="background: #fef3c7; color: #b45309;">${item.search_completed}</span></td>
+                        <td><span class="badge" style="background: #dcfce7; color: #15803d;">${item.qc_completed}</span></td>
+                        <td><span class="badge" style="background: #e0e7ff; color: #4338ca;">${item.dispatched}</span></td>
+                        <td><span class="badge" style="background: #f1f5f9; color: #64748b;">${item.cancelled_hold}</span></td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            }
+        } catch (error) {
+            console.error('Error fetching order summary:', error);
+            const tbody = document.getElementById('summary-table-body');
+            if (tbody) {
+                tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: red;">Failed to load summary.</td></tr>`;
+            }
+        }
+    }
+
+    // Initialize summary date filter
+    const summaryDateInput = document.getElementById('summaryDateFilter');
+    if (summaryDateInput) {
+        const today = new Date();
+        const yyyy = today.getFullYear();
+        const mm = String(today.getMonth() + 1).padStart(2, '0');
+        const dd = String(today.getDate()).padStart(2, '0');
+        summaryDateInput.value = `${yyyy}-${mm}-${dd}`;
+
+        summaryDateInput.addEventListener('change', () => {
+            if (typeof window.fetchOrderSummary === 'function') {
+                window.fetchOrderSummary(true);
+            }
+        });
+    }
+
     // Start auto-refresh when the page loads
     startAutoRefresh();
 
@@ -2328,6 +2798,20 @@ document.addEventListener('DOMContentLoaded', function() {
     if (refreshBtn) {
         refreshBtn.addEventListener('click', () => {
             fetchExistingOrders(true); // Pass true to indicate manual refresh
+        });
+    }
+
+    // Initialize date filter to today
+    const dateInput = document.getElementById('allocationDateFilter');
+    if (dateInput) {
+        const today = new Date();
+        const yyyy = today.getFullYear();
+        const mm = String(today.getMonth() + 1).padStart(2, '0');
+        const dd = String(today.getDate()).padStart(2, '0');
+        dateInput.value = `${yyyy}-${mm}-${dd}`;
+
+        dateInput.addEventListener('change', () => {
+            fetchExistingOrders(true);
         });
     }
 

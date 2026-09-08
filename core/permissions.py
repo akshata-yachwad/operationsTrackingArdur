@@ -34,11 +34,22 @@ class IsAdmin(IsAuthenticatedEmployee):
         return super().has_permission(request, view) and request.user.is_admin
 
 
-class IsAdminOrSupervisor(IsAuthenticatedEmployee):
-    message = "Only a supervisor or administrator can do that."
+class IsProjectAdmin(IsAuthenticatedEmployee):
+    message = "Only a project admin or super admin can do that."
 
     def has_permission(self, request, view) -> bool:
-        return super().has_permission(request, view) and request.user.is_supervisor
+        return super().has_permission(request, view) and request.user.is_project_admin
+
+
+class IsManager(IsAuthenticatedEmployee):
+    """SuperAdmin, ProjectAdmin, or TeamLead."""
+    message = "Only a manager can do that."
+
+    def has_permission(self, request, view) -> bool:
+        return super().has_permission(request, view) and request.user.is_team_lead
+
+# Alias for backward compatibility during migration
+IsAdminOrSupervisor = IsProjectAdmin
 
 
 class IsAdminOrReadOnly(IsAuthenticatedEmployee):

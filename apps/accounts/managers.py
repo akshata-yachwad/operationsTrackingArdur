@@ -46,7 +46,7 @@ class UserManager(models.Manager.from_queryset(UserQuerySet)):
 
         Employee.objects.update_or_create(
             employee_id=emp_id,
-            defaults={"name": name or emp_id, "role": "admin", "status": "active"},
+            defaults={"name": name or emp_id, "role": "super_admin", "status": "active"},
         )
         return user
 

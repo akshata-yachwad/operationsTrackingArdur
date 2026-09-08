@@ -112,3 +112,27 @@ class SecurityHeadersMiddleware(MiddlewareMixin):
                 response["Content-Security-Policy"] = csp
 
         return response
+
+
+class CatchSessionInterruptedMiddleware:
+    """Catches SessionInterrupted exceptions from forced logouts and redirects safely."""
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        try:
+            return self.get_response(request)
+        except Exception as e:
+            # Import here to avoid circular imports during startup
+            from django.contrib.sessions.exceptions import SessionInterrupted
+            if isinstance(e, SessionInterrupted):
+                from django.http import HttpResponseRedirect
+                response = HttpResponseRedirect('/login/')
+                response.delete_cookie(
+                    settings.SESSION_COOKIE_NAME,
+                    path=settings.SESSION_COOKIE_PATH,
+                    domain=settings.SESSION_COOKIE_DOMAIN,
+                    samesite=settings.SESSION_COOKIE_SAMESITE,
+                )
+                return response
+            raise

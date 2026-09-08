@@ -40,7 +40,10 @@ document.addEventListener("DOMContentLoaded", function () {
                 tableBody.innerHTML = ''; 
     
                 if (res.error || !Array.isArray(data)) {
-                    tableBody.innerHTML = `<tr><td colspan="4" class="error-message">${res.error || 'Error fetching breaks'}</td></tr>`;
+                    let errMsg = 'Error fetching breaks';
+                    if (res.error && res.error.message) errMsg = res.error.message;
+                    else if (typeof res.error === 'string') errMsg = res.error;
+                    tableBody.innerHTML = `<tr><td colspan="4" class="error-message">${errMsg}</td></tr>`;
                     return;
                 }
     

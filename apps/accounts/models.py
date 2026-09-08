@@ -19,8 +19,9 @@ from core.timezone import now_ist
 
 
 class Role(models.TextChoices):
-    ADMIN = "admin", "Administrator"
-    SUPERVISOR = "supervisor", "Supervisor"
+    SUPER_ADMIN = "super_admin", "Super Admin"
+    PROJECT_ADMIN = "project_admin", "Project Admin"
+    TEAM_LEAD = "team_lead", "Team Lead"
     EMPLOYEE = "employee", "Employee"
 
 
@@ -95,13 +96,32 @@ class User(AbstractBaseUser):
         return self.name or (self.employee.name if self.employee else self.emp_id)
 
     @property
+    def is_super_admin(self) -> bool:
+        return self.role.lower() == Role.SUPER_ADMIN if self.role else False
+
+    @property
+    def is_project_admin(self) -> bool:
+        return self.role.lower() in (Role.SUPER_ADMIN, Role.PROJECT_ADMIN) if self.role else False
+
+    @property
+    def is_team_lead(self) -> bool:
+        return self.role.lower() in (Role.SUPER_ADMIN, Role.PROJECT_ADMIN, Role.TEAM_LEAD) if self.role else False
+
+    @property
     def is_admin(self) -> bool:
-        return self.role.lower() == Role.ADMIN if self.role else False
+        return self.is_super_admin
 
     @property
     def is_supervisor(self) -> bool:
-        """Supervisor *or above* — admins are supervisors for every purpose."""
-        return self.role.lower() in (Role.ADMIN, Role.SUPERVISOR) if self.role else False
+        """Backward compatibility for existing code"""
+        return self.is_project_admin
+
+    def get_authorized_projects(self) -> list[str]:
+        if self.is_super_admin:
+            return ["*"] # Represents global access
+        if self.employee and self.employee.project:
+            return [p.strip() for p in self.employee.project.split("|") if p.strip()]
+        return []
 
     @property
     def is_active(self) -> bool:
@@ -177,22 +197,9 @@ class Employee(models.Model):
 
     @property
     def is_supervisor(self) -> bool:
-        return self.role.lower() in (Role.ADMIN, Role.SUPERVISOR) if self.role else False
+        return self.role.lower() in (Role.SUPER_ADMIN, Role.PROJECT_ADMIN) if self.role else False
 
-    @classmethod
-    def generate_employee_id(cls) -> str:
-        """Auto-generate the next employee ID, e.g., AT0010."""
-        last_emp = cls.objects.filter(employee_id__startswith="AT").order_by("-employee_id").first()
-        if not last_emp:
-            return "AT0001"
-        
-        try:
-            # Extract numeric part (e.g., '0009' from 'AT0009')
-            num_part = int(last_emp.employee_id[2:])
-            return f"AT{num_part + 1:04d}"
-        except ValueError:
-            # Fallback if something weird is in the DB
-            return "AT0001"
+
 
 
 class LoginHistory(models.Model):

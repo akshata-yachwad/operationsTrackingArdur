@@ -650,10 +650,12 @@ document.addEventListener('DOMContentLoaded', function () {
         checkPendingTasks();
 
         // Listen for new assignment events via WebSocket
-        socket.on('new_assignment', (data) => {
-            console.log('Received new_assignment event:', data);
-            checkPendingTasks();
-        });
+        if (typeof window.socket !== 'undefined' && window.socket) {
+            window.socket.on('new_assignment', (data) => {
+                console.log('Received new_assignment event:', data);
+                checkPendingTasks();
+            });
+        }
     }
 
     // Add click handlers for view buttons
@@ -1548,7 +1550,9 @@ const TITLE_INDEXING_CONFIG = {
 
 // Function to check if project is TitleIndexing
 function isTitleIndexingProject(projectName) {
-    return projectName && projectName.toLowerCase().includes('titleindexing');
+    if (!projectName) return false;
+    const lower = projectName.toLowerCase();
+    return lower.includes('titleindexing') || lower.includes('title indexing');
 }
 
 // Function to update type dropdown based on project

@@ -587,6 +587,9 @@ document.addEventListener("DOMContentLoaded", () => {
                 // Set basic project info
                 document.getElementById('edit-project_id').value = data.project_id;
                 document.getElementById('edit-project_name').value = data.project_name;
+                document.getElementById('edit-requires_attendance').checked = data.requires_attendance || false;
+                document.getElementById('edit-is_simplified_project').checked = data.is_simplified_project || false;
+
 
                 // Store selected work types for reference
                 const selectedWorkTypes = data.worktypes ? data.worktypes.split('|') : [];

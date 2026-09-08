@@ -16,7 +16,7 @@ from apps.allocations.serializers import (
 )
 from apps.allocations.services import AllocationService
 from core.mixins import EnvelopeMixin, ServiceMixin
-from core.permissions import IsAdminOrSupervisor, IsAuthenticatedEmployee
+from core.permissions import IsAdminOrSupervisor, IsAuthenticatedEmployee, IsManager
 
 
 class AllocationViewSet(ServiceMixin, EnvelopeMixin, viewsets.ModelViewSet):
@@ -37,7 +37,7 @@ class AllocationViewSet(ServiceMixin, EnvelopeMixin, viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action in ("create", "update", "partial_update", "destroy",
                            "reassign", "cancel"):
-            return [IsAdminOrSupervisor()]
+            return [IsManager()]
         return super().get_permissions()
 
     def get_serializer_class(self):
@@ -59,6 +59,11 @@ class AllocationViewSet(ServiceMixin, EnvelopeMixin, viewsets.ModelViewSet):
             queryset = queryset.overdue()
         if project := params.get("project"):
             queryset = queryset.filter(project=project)
+        date_val = params.get("date")
+        print(f"DEBUG: Received date_val = {date_val!r}, Total orders before filter = {queryset.count()}")
+        if date_val:
+            queryset = queryset.filter(allocated_at__startswith=date_val)
+            print(f"DEBUG: Orders after filter = {queryset.count()}")
         return queryset
 
     def perform_create(self, serializer):
@@ -162,7 +167,7 @@ class AllocationViewSet(ServiceMixin, EnvelopeMixin, viewsets.ModelViewSet):
         # User is the QC person, only show when it reaches QC or later
         from apps.allocations.models import AllocationStatus
         cond_qc = Q(qc_id=emp_id) & Q(status__in=[
-            AllocationStatus.SEND_FOR_QC,
+            AllocationStatus.READY_FOR_QC,
             AllocationStatus.QC_IN_PROGRESS,
             AllocationStatus.COMPLETED,
         ])
@@ -175,6 +180,46 @@ class AllocationViewSet(ServiceMixin, EnvelopeMixin, viewsets.ModelViewSet):
         """Return the next auto-generated ar_number."""
         return self.ok({"next_ar_number": BatchAllocation.generate_ar_number()})
 
+    @action(detail=False, methods=["get"])
+    def summary(self, request):
+        """Returns client-wise aggregation of order statuses for a given date."""
+        from django.db.models import Count, Q
+        from apps.allocations.models import AllocationStatus
+        
+        queryset = self.get_queryset()
+        
+        # We assume get_queryset already applied the date filter (if provided)
+        # However, get_queryset limits date using `startswith`, we might want to group by client_code.
+        summary_data = queryset.values('client_code').annotate(
+            total=Count('id'),
+            assigned=Count('id', filter=Q(employee_id__gt='')),
+            not_assigned=Count('id', filter=Q(employee_id='')),
+            search_completed=Count('id', filter=Q(status__in=[
+                AllocationStatus.READY_FOR_QC, 
+                AllocationStatus.QC_IN_PROGRESS, 
+                AllocationStatus.COMPLETED, 
+                AllocationStatus.DISPATCH
+            ])),
+            qc_completed=Count('id', filter=Q(status__in=[
+                AllocationStatus.COMPLETED, 
+                AllocationStatus.DISPATCH
+            ])),
+            dispatched=Count('id', filter=Q(status=AllocationStatus.DISPATCH)),
+            cancelled_hold=Count('id', filter=Q(status__in=[
+                AllocationStatus.CANCELLED,
+                AllocationStatus.ON_HOLD
+            ]))
+        ).order_by('client_code')
+        
+        # Now fetch client names
+        from apps.masters.models import ClientCode
+        client_codes = [s['client_code'] for s in summary_data]
+        clients = {c.client_code: c.client_name for c in ClientCode.objects.filter(client_code__in=client_codes)}
+        
+        for item in summary_data:
+            item['client_name'] = clients.get(item['client_code'], item['client_code'])
+            
+        return self.ok(list(summary_data))
 
 class OrderHistoryViewSet(EnvelopeMixin, viewsets.ReadOnlyModelViewSet):
     """/api/v1/allocations/history/ — the audit trail, supervisors only."""
@@ -242,3 +287,109 @@ class OrderRateViewSet(EnvelopeMixin, viewsets.ReadOnlyModelViewSet):
             .order_by().values_list("county", flat=True).distinct()
         )
         return self.ok(sorted(counties))
+
+
+from apps.allocations.models import TitleIndexingSession
+from apps.allocations.serializers import TitleIndexingSessionSerializer
+from rest_framework.decorators import action
+from datetime import datetime
+from core.timezone import now_ist
+from core.mixins import EnvelopeMixin
+from rest_framework import viewsets, status
+from rest_framework.response import Response
+
+class TitleIndexingSessionViewSet(EnvelopeMixin, viewsets.ModelViewSet):
+    """API for managing Title Indexing Sessions."""
+    queryset = TitleIndexingSession.objects.all()
+    serializer_class = TitleIndexingSessionSerializer
+    permission_classes = [IsAuthenticatedEmployee]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        if self.request.user.is_team_lead:
+            return qs
+        return qs.filter(employee_id=self.request.user.emp_id)
+
+    @action(detail=False, methods=["post"], url_path="start")
+    def start_session(self, request):
+        """Starts a new Title Indexing session."""
+        emp_id = request.user.emp_id
+        
+        # Check if there's already an in-progress session
+        active_session = TitleIndexingSession.objects.filter(
+            employee_id=emp_id, status='IN_PROGRESS'
+        ).first()
+        
+        if active_session:
+            return Response({"error": "An active indexing session is already running."}, status=status.HTTP_400_BAD_REQUEST)
+
+        client_code = request.data.get("client_code", "")
+        work_type = request.data.get("work_type", "")
+        
+        if not client_code or not work_type:
+            return Response({"error": "Client code and Work type are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        session = TitleIndexingSession.objects.create(
+            employee_id=emp_id,
+            client_code=client_code,
+            work_type=work_type,
+            status='IN_PROGRESS'
+        )
+        
+        try:
+            from apps.presence.services import PresenceService
+            PresenceService().recompute(emp_id)
+        except Exception:
+            pass
+
+        return self.ok(TitleIndexingSessionSerializer(session).data)
+
+    @action(detail=True, methods=["post"], url_path="submit")
+    def submit_session(self, request, pk=None):
+        """Submits the session with completed work units."""
+        session = self.get_object()
+        
+        if session.status == 'COMPLETED':
+            return Response({"error": "Session is already completed."}, status=status.HTTP_400_BAD_REQUEST)
+
+        work_units = request.data.get("work_units_completed")
+        if work_units is None:
+            return Response({"error": "work_units_completed is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            work_units = int(work_units)
+        except ValueError:
+            return Response({"error": "work_units_completed must be an integer."}, status=status.HTTP_400_BAD_REQUEST)
+
+        session.work_units_completed = work_units
+        session.completed_at = now_ist()
+        session.status = 'COMPLETED'
+        
+        # Calculate time taken
+        diff = session.completed_at - session.started_at
+        total_seconds = int(diff.total_seconds())
+        hours = total_seconds // 3600
+        minutes = (total_seconds % 3600) // 60
+        seconds = total_seconds % 60
+        session.time_taken = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        
+        session.save()
+
+        try:
+            from apps.presence.services import PresenceService
+            PresenceService().recompute(session.employee_id)
+        except Exception:
+            pass
+
+        return self.ok(TitleIndexingSessionSerializer(session).data)
+
+    @action(detail=False, methods=["get"], url_path="my_active")
+    def my_active(self, request):
+        """Returns the currently active session for the employee, if any."""
+        session = TitleIndexingSession.objects.filter(
+            employee_id=request.user.emp_id, status='IN_PROGRESS'
+        ).first()
+        
+        if session:
+            return self.ok(TitleIndexingSessionSerializer(session).data)
+        return self.ok(None)

@@ -3,13 +3,13 @@
     <div id="orderallocation" class="orderallocationcontainer tab-content" style="display:none;">
         <div class="employees-header">
             <h2><i class="fas fa-tasks"></i> Order Allocation</h2>
-            <button id="toggleFormBtn" class="toggle-form-btn">
+            <button id="toggleFormBtn" class="toggle-form-btn active">
                 <i class="fas fa-plus"></i>
             </button>
         </div>
         <div class="order-allocation-layout">
             <!-- Form Section -->
-            <div id="orderAllocationFormContainer" class="order-allocation-form-container" style="display: none;">
+            <div id="orderAllocationFormContainer" class="order-allocation-form-container" style="display: block;">
                 <form id="orderallocationForm" novalidate>
                     <div class="form-grid-container">
                         <div class="form-group" style="display: none;">
@@ -122,18 +122,21 @@
 
                         <div class="form-group">
                             <label for="oa_document">Upload Order Form:</label>
-                            <input type="file" id="oa_document" name="documents[]" accept=".doc,.docx,.pdf" multiple disabled>
+                            <input type="file" id="oa_document" name="documents[]" accept=".doc,.docx,.pdf" multiple
+                                disabled>
                         </div>
 
                         <div style="grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
                             <div class="form-group" style="margin-bottom: 0;">
                                 <label for="oa_generalInstructions">General Instructions:</label>
-                                <textarea id="oa_generalInstructions" name="generalInstructions" rows="4" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; resize: vertical;">Please ensure all mandatory fields are filled out accurately.&#10;Verify property details against the provided documentation and report any discrepancies immediately.&#10;Chain sheets must include full historical data back to the requested date.</textarea>
+                                <textarea id="oa_generalInstructions" name="generalInstructions" rows="4"
+                                    style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; resize: vertical;">Please ensure all mandatory fields are filled out accurately.&#10;Verify property details against the provided documentation and report any discrepancies immediately.&#10;Chain sheets must include full historical data back to the requested date.</textarea>
                             </div>
 
                             <div class="form-group" style="margin-bottom: 0;">
                                 <label for="oa_remarks">Special Instructions:</label>
-                                <textarea id="oa_remarks" name="remarks" rows="4" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; resize: vertical;"></textarea>
+                                <textarea id="oa_remarks" name="remarks" rows="4"
+                                    style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; resize: vertical;"></textarea>
                             </div>
                         </div>
 
@@ -155,6 +158,7 @@
                         <h3><i class="fas fa-list"></i> Allocated Orders</h3>
                         <div class="allocation-search-container">
                             <div class="search-wrapper">
+                                <input type="date" id="allocationDateFilter" class="allocation-date-input" title="Filter by date" style="padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 13px; outline: none; margin-right: 8px; color: #475569;">
                                 <input type="text" id="allocationSearchInput" class="allocation-search-input"
                                     placeholder="Global Search...">
                                 <i class="fas fa-times allocation-clear-search-icon" id="clearAllocationSearch"></i>

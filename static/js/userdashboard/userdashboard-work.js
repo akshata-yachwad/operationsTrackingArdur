@@ -215,7 +215,7 @@ endForm.addEventListener('submit', function (event) {
                 } else {
                     if (window.activeAllocationIdToComplete) {
                         const allocId = window.activeAllocationIdToComplete;
-                        const targetStatus = window.activeAllocationTargetStatus || "in_progress";
+                        const targetStatus = window.activeAllocationTargetStatus || "search_in_progress";
                         const isQC = targetStatus === "dispatch";
                         formData.append("status", targetStatus);
                         formData.delete("employee_comments");
@@ -308,7 +308,7 @@ function submitWorkData(review) {
     const empComments = formData.get("employee_comments") || "";
 
     if (window.activeAllocationIdToComplete) {
-        const targetStatus = window.activeAllocationTargetStatus || "in_progress";
+        const targetStatus = window.activeAllocationTargetStatus || "search_in_progress";
         if (targetStatus === "dispatch") {
             formData.delete("employee_comments");
             // Append qc_comments here so it's ready for the tracking API (though it ignores it)
@@ -334,7 +334,7 @@ function submitWorkData(review) {
                 // --- Check if we need to also complete an allocated order ---
                 if (window.activeAllocationIdToComplete) {
                     const allocId = window.activeAllocationIdToComplete;
-                    const targetStatus = window.activeAllocationTargetStatus || "in_progress";
+                    const targetStatus = window.activeAllocationTargetStatus || "search_in_progress";
                     const isQC = targetStatus === "dispatch";
 
                     // We reuse formData which already contains the files and correct comments
@@ -562,7 +562,7 @@ function fetchWorkData(date) {
                 tr.innerHTML = `
                     <td>${dateStr}</td>
                     <td>${row.project_name || row.project || ''}</td>
-                    <td>${row.client_name || row.client_code || ''}</td>
+                    <td style="display:none;">${row.client_name || row.client_code || ''}</td>
                     <td>${row.work_type || ''}</td>
                     <td>${row.order_type || '-'}</td>
                     <td>${startTimeStr}</td>
@@ -979,9 +979,9 @@ window.startAllocatedWorkSession = async function (allocData) {
             activeSessionId = result.id;
             window.activeAllocationId = allocData.allocation_id;
 
-            let targetStatus = "in_progress"; // Default: Keep in progress if no QC is assigned
+            let targetStatus = "completed"; // Default: Mark completed if no QC is assigned
             if (allocData.is_qc) targetStatus = "dispatch";
-            else if (allocData.has_qc) targetStatus = "send_for_qc";
+            else if (allocData.has_qc) targetStatus = "ready_for_qc";
 
             window.activeAllocationIdToComplete = allocData.allocation_id;
             window.activeAllocationTargetStatus = targetStatus;
@@ -1013,7 +1013,7 @@ window.startAllocatedWorkSession = async function (allocData) {
     }
 };
 
-window.completeAllocatedOrder = function (allocationId, targetStatus = "in_progress") {
+window.completeAllocatedOrder = function (allocationId, targetStatus = "search_in_progress") {
     window.activeAllocationIdToComplete = allocationId;
     window.activeAllocationTargetStatus = targetStatus;
 

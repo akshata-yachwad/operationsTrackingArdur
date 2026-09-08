@@ -19,7 +19,7 @@ from apps.allocations.models import BatchAllocation
 from apps.breaks.models import BreakTime
 from apps.feedback.models import Feedback
 from apps.tracking.models import SessionState, WorkSession
-from core.timezone import day_bounds, today_ist
+from core.timezone import day_bounds, today_ist, now_ist
 from apps.accounts.models import Employee
 
 
@@ -131,6 +131,9 @@ class ProductivitySelector(BaseSelector):
         return queryset.filter(q_date)
 
     def rows(self) -> list[dict]:
+        from apps.allocations.models import TitleIndexingSession
+        from apps.accounts.models import Employee
+        
         queryset = self.base_queryset(WorkSession.objects.exclude(is_started=SessionState.ALLOCATED))
 
         rows_dict = {}
@@ -141,6 +144,48 @@ class ProductivitySelector(BaseSelector):
             
             rows_dict[key]["sessions"] += 1
             rows_dict[key]["total_seconds"] += session.live_elapsed_seconds or 0
+            
+        # Add Title Indexing Sessions
+        idx_qs = TitleIndexingSession.objects.all()
+        f = self.filters
+        if f.emp_ids:
+            idx_qs = idx_qs.filter(employee_id__in=f.emp_ids)
+        if f.projects:
+            idx_qs = idx_qs.filter(project__in=f.projects)
+        if f.work_types:
+            idx_qs = idx_qs.filter(work_type__in=f.work_types)
+            
+        if f.date_from:
+            start, _ = day_bounds(f.date_from)
+            idx_qs = idx_qs.filter(started_at__gte=start)
+        if f.date_to:
+            _, end = day_bounds(f.date_to)
+            idx_qs = idx_qs.filter(started_at__lt=end)
+            
+        employee_cache = {}
+        
+        for session in idx_qs:
+            emp_id = session.employee_id
+            if emp_id not in employee_cache:
+                emp = Employee.objects.filter(emp_id=emp_id).first()
+                employee_cache[emp_id] = emp.name if emp else emp_id
+                
+            name = employee_cache[emp_id]
+            project = session.project
+            key = (emp_id, name, project)
+            
+            if key not in rows_dict:
+                rows_dict[key] = {"sessions": 0, "total_seconds": 0}
+                
+            rows_dict[key]["sessions"] += 1
+            
+            # calculate seconds if completed, else use current time
+            if session.status == 'COMPLETED' and session.completed_at:
+                diff = session.completed_at - session.started_at
+                rows_dict[key]["total_seconds"] += int(diff.total_seconds())
+            else:
+                diff = now_ist() - session.started_at
+                rows_dict[key]["total_seconds"] += int(diff.total_seconds())
 
         rows = []
         for (emp_id, name, project), data in rows_dict.items():

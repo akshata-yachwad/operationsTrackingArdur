@@ -59,6 +59,8 @@ class Project(MasterRecord):
     worktypes = models.TextField(blank=True, default="")
     start_date = models.DateField(null=True, blank=True)
     end_date = models.DateField(null=True, blank=True)
+    requires_attendance = models.BooleanField(default=False)
+    is_simplified_project = models.BooleanField(default=False)
 
     class Meta:
         managed = legacy_managed()

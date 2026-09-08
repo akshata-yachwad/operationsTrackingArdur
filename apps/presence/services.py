@@ -74,11 +74,15 @@ class PresenceService:
         """Derive the current status and store it."""
         from apps.breaks.models import BreakTime
         from apps.tracking.models import WorkSession
+        from apps.allocations.models import TitleIndexingSession
 
         if BreakTime.objects.filter(user_id=emp_id, end_time__isnull=True).exists():
             return self._store(emp_id, PresenceStatus.ON_BREAK, StatusSource.BREAK)
 
         if WorkSession.objects.filter(emp_id=emp_id).active_now().exists():
+            return self._store(emp_id, PresenceStatus.WORKING, StatusSource.WORK_SESSION)
+
+        if TitleIndexingSession.objects.filter(employee_id=emp_id, status='IN_PROGRESS').exists():
             return self._store(emp_id, PresenceStatus.WORKING, StatusSource.WORK_SESSION)
 
         manual = cache.get(MANUAL_KEY.format(emp_id=emp_id))
@@ -93,7 +97,7 @@ class PresenceService:
 
                 if elapsed_seconds(state.last_heartbeat_at) > IDLE_AFTER_SECONDS:
                     return self._store(emp_id, PresenceStatus.IDLE, StatusSource.SOCKET)
-            return self._store(emp_id, PresenceStatus.ONLINE, StatusSource.SOCKET)
+            return self._store(emp_id, PresenceStatus.IDLE, StatusSource.SOCKET)
 
         return self._store(emp_id, PresenceStatus.OFFLINE, StatusSource.SOCKET)
 

@@ -100,7 +100,7 @@ class EmployeeWriteSerializer(serializers.ModelSerializer):
     row nobody can find again.
     """
 
-    employee_id = serializers.CharField(max_length=20, required=False, allow_blank=True)
+    employee_id = serializers.CharField(max_length=20, required=True, allow_blank=False)
     name = serializers.CharField(max_length=100, validators=[validate_non_blank])
     role = serializers.CharField(max_length=20, default=Role.EMPLOYEE)
     employee_type = serializers.CharField(max_length=50, default=EmployeeType.EMPLOYEE)

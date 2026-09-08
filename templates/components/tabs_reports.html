@@ -2,12 +2,13 @@
 <div id="repcontent" class="repcontent">
     <div id="reports" class="reportscontainer tab-content" style="display:block;">
         <div class="reports-page-title">
-            <h2><i class="fas fa-chart-bar"></i> Employee Productivity Report</h2>
+            <h2><i class="fas fa-chart-bar"></i> Reports</h2>
             <div class="reports-toggle-btn">
                 <button class="toggle-btn">
                     <span class="summary-btn active">Summary</span>
                     <span class="report-btn">Report</span>
                     <span class="graphs-btn">Graphs</span>
+                    <span class="attendance-btn">Attendance</span>
                 </button>
             </div>
         </div>
@@ -42,7 +43,8 @@
                             <option value="csv">CSV</option>
                             <option value="excel">Excel</option>
                         </select>
-                        <button id="downloadButton" title="Download" class="reports-download-button" aria-label="Download">
+                        <button id="downloadButton" title="Download" class="reports-download-button"
+                            aria-label="Download">
                             <i class="fas fa-download"></i>
                         </button>
                         <button id="refreshButton" title="Refresh" class="reports-refresh-button" aria-label="Refresh">
@@ -51,9 +53,10 @@
                     </div>
                 </div>
                 <div class="reports-table-container">
-                    <table id="reportsTable" class="reports-data-table">
+                    <table id="reportsTable" class="reports-data-table" width="100%">
                         <thead>
                             <tr>
+                                <th>Sr No</th>
                                 <th>Emp ID</th>
                                 <th>Emp Name</th>
                                 <th>Date</th>
@@ -63,6 +66,7 @@
                                 <th>Client Code</th>
                                 <th>WorkType</th>
                                 <th>Order No.</th>
+                                <th>Units Completed</th>
                                 <th>Total Time</th>
                                 <th>Location</th>
                                 <th>Status</th>
@@ -105,6 +109,45 @@
                             </div>
                         </div>
                     </div>
+                </div>
+            </div>
+        </div>
+        <div id="attendanceSection" class="attendance-section" style="display:none;">
+            <div class="reports-filter-card">
+                <div class="reports-filter-header">
+                    <div class="date-range-container">
+                        <label for="attStartDate">From:</label>
+                        <input type="date" id="attStartDate" class="reports-date-picker">
+                        <label for="attEndDate">To:</label>
+                        <input type="date" id="attEndDate" class="reports-date-picker">
+                    </div>
+                    <select id="attProjectFilter" class="reports-project-dropdown">
+                        <option value="">All Projects</option>
+                    </select>
+                    <input type="text" id="attEmpIdFilter" class="reports-search-field" placeholder="Search by Emp ID" style="width: 200px;">
+                    <button id="refreshAttendanceButton" title="Refresh" class="reports-refresh-button" aria-label="Refresh">
+                        <i class="fas fa-sync-alt"></i> Refresh
+                    </button>
+                    <button id="exportAttendanceButton" title="Export to Excel" class="btn-primary" aria-label="Export to Excel" style="padding: 5px 15px; border-radius: 4px; border: none; cursor: pointer; color: white; background-color: #008f88;">
+                        <i class="fas fa-file-excel"></i> Export
+                    </button>
+                </div>
+                <div class="reports-table-container">
+                    <table id="attendanceReportTable" class="reports-data-table" width="100%">
+                        <thead>
+                              <tr>
+                                  <th>Sr No</th>
+                                  <th>Date</th>
+                                  <th>Emp ID</th>
+                                  <th>Emp Name</th>
+                                  <th>Status</th>
+                                  <th>First Login</th>
+                                  <th>Last Logout</th>
+                                  <th>Net Working Hours</th>
+                              </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
                 </div>
             </div>
         </div>
@@ -285,7 +328,8 @@
                         <label>Screenshots:</label>
                         <div id="dropZone" class="drop-zone">
                             <p>Drop images here or click to upload</p>
-                            <input type="file" id="closureScreenshot" name="screenshots" multiple accept="image/*" style="display:none;">
+                            <input type="file" id="closureScreenshot" name="screenshots" multiple accept="image/*"
+                                style="display:none;">
                         </div>
                         <div id="previewContainer" class="preview-container"></div>
                     </div>
@@ -323,7 +367,7 @@
                     <button class="audit-refresh-button" title="Refresh"><i class="fas fa-sync-alt"></i></button>
                 </div>
             </div>
-            
+
             <div class="audit-filter-row">
                 <select id="auditProjectFilter">
                     <option value="">All Projects</option>
@@ -362,7 +406,8 @@
         </table>
 
         <div class="audit-pagination">
-            <span id="auditStartEntry">0</span>–<span id="auditEndEntry">0</span> of <span id="auditTotalEntries">0</span>
+            <span id="auditStartEntry">0</span>–<span id="auditEndEntry">0</span> of <span
+                id="auditTotalEntries">0</span>
             <button id="auditPrevPage"><i class="fas fa-chevron-left"></i></button>
             <span id="auditCurrentPage">1</span>
             <button id="auditNextPage"><i class="fas fa-chevron-right"></i></button>

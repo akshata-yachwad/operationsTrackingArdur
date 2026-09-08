@@ -26,19 +26,20 @@ function fmtDate(iso) {
 function statusBadge(status) {
   const map = {
     pending: "badge-pending",
-    in_progress: "badge-inprogress",
+    search_in_progress: "badge-inprogress",
     qc_in_progress: "badge-inprogress",
     completed: "badge-completed",
     on_hold: "badge-onhold",
     cancelled: "badge-cancelled",
     dispatch: "badge-dispatch",
-    send_for_qc: "badge-sendforqc"
+    ready_for_qc: "badge-sendforqc"
   };
   const cls = map[status.toLowerCase()] || map[status] || "badge-pending";
   let label = status || "pending";
-  if (label.toLowerCase() === 'send_for_qc' || label.toLowerCase() === 'send__for__qc') label = 'Send for QC';
-  else if (label.toLowerCase() === 'in_progress' || label.toLowerCase() === 'in__progress') label = 'In Progress';
-  else if (label.toLowerCase() === 'qc_in_progress' || label.toLowerCase() === 'qc__in__progress') label = 'QC In Progress';
+  if (label.toLowerCase() === 'ready_for_qc') label = 'Ready for QC';
+  else if (label.toLowerCase() === 'search_in_progress') label = 'Search In Progress';
+  else if (label.toLowerCase() === 'qc_in_progress') label = 'QC In Progress';
+  else if (label.toLowerCase() === 'completed') label = 'Search Complete';
   else label = label.replace(/_+/g, " ");
   return `<span class="alloc-status-badge ${cls}">${label}</span>`;
 }
@@ -57,7 +58,7 @@ function renderRow(alloc, hasActiveTask = false) {
     currentRole = "Search";
   } else if (isAssignedEmployee && isAssignedQC) {
     // If assigned both roles, role switches to QC after search completes
-    if (["send_for_qc", "qc_in_progress", "dispatch", "completed"].includes((alloc.status || "").toLowerCase())) {
+    if (["ready_for_qc", "qc_in_progress", "dispatch", "completed"].includes((alloc.status || "").toLowerCase())) {
       currentRole = "QC";
     } else {
       currentRole = "Search";
@@ -69,7 +70,7 @@ function renderRow(alloc, hasActiveTask = false) {
   if (alloc.is_overdue) tr.classList.add("alloc-row-overdue");
 
   tr.innerHTML = `
-    <td>${alloc.client_name || alloc.client_code || "-"}</td>
+    <td style="display:none;">${alloc.client_code || "-"}</td>
     <td>${alloc.work_type || "-"}</td>
     <td>${alloc.order_id || "-"}</td>
     <td>${alloc.ar_number || "-"}</td>
@@ -82,7 +83,7 @@ function renderRow(alloc, hasActiveTask = false) {
     <td>${statusBadge(alloc.status)}</td>
     <td><span style="font-weight: 500; color: ${isQC ? '#8e24aa' : '#1e8449'}; background: ${isQC ? '#f3e5f5' : '#e8f5e9'}; padding: 4px 8px; border-radius: 4px; font-size: 11px;">${currentRole}</span></td>
     <td>
-      ${(alloc.status === "pending" && !isQC) || (alloc.status === "send_for_qc" && isQC) ? `
+      ${(alloc.status === "pending" && !isQC) || (["ready_for_qc", "completed"].includes(alloc.status) && isQC) ? `
       <button
         class="alloc-start-btn action-btn"
         data-allocation-id="${alloc.allocation_id}"
@@ -90,13 +91,15 @@ function renderRow(alloc, hasActiveTask = false) {
         data-client-code="${alloc.client_code || ''}"
         data-work-type="${alloc.work_type || ''}"
         data-batch="${alloc.batch || alloc.order_id || ''}"
-        data-target-status="${isQC ? 'qc_in_progress' : 'in_progress'}"
+        data-target-status="${isQC ? 'qc_in_progress' : 'search_in_progress'}"
+        data-is-qc="${isQC}"
+        data-has-qc="${!!alloc.qc_id}"
         title="${hasActiveTask ? 'Complete your active task first' : 'Start this order'}"
         ${hasActiveTask ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''}
       >
         <i class="fas fa-play"></i>
       </button>
-      ` : alloc.status === "in_progress" && !isQC ? `
+      ` : alloc.status === "search_in_progress" && !isQC ? `
       <button
         class="alloc-complete-btn action-btn"
         data-allocation-id="${alloc.allocation_id}"
@@ -175,7 +178,7 @@ function showOrderDetailsModal(alloc) {
             ` : ''}
             
             <div class="oa-details-grid">
-                <div class="oa-detail-item">
+                <div class="oa-detail-item" style="display:none;">
                     <div class="oa-detail-label">Client Code</div>
                     <div class="oa-detail-value">${alloc.client_code || '-'}</div>
                 </div>
@@ -361,7 +364,7 @@ async function loadAllocatedOrders() {
         : [];
 
     tbody.innerHTML = "";
-    const hasActiveTask = items.some(a => a.status === "in_progress" || a.status === "qc_in_progress");
+    const hasActiveTask = items.some(a => a.status === "search_in_progress" || a.status === "qc_in_progress");
     items.forEach((alloc) => tbody.appendChild(renderRow(alloc, hasActiveTask)));
 
     if (empty) empty.hidden = items.length > 0;
@@ -407,7 +410,7 @@ async function markInProgress(btn) {
         "Content-Type": "application/json",
         "X-CSRFToken": CSRF(),
       },
-      body: JSON.stringify({ status: btn.dataset.targetStatus || "in_progress" }),
+      body: JSON.stringify({ status: btn.dataset.targetStatus || "search_in_progress" }),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
@@ -441,9 +444,9 @@ function markCompleted(btn) {
   const isQC = btn.dataset.isQc === "true";
   const hasQC = btn.dataset.hasQc === "true";
 
-  let targetStatus = "in_progress"; // Default: Keep in progress if no QC is assigned
+  let targetStatus = "completed"; // Default: Mark completed if no QC is assigned
   if (isQC) targetStatus = "dispatch";
-  else if (hasQC) targetStatus = "send_for_qc";
+  else if (hasQC) targetStatus = "ready_for_qc";
 
   if (window.completeAllocatedOrder) {
     window.completeAllocatedOrder(allocationId, targetStatus);

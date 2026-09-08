@@ -91,7 +91,7 @@ def test_current_user_handles_a_missing_employee_record(db):
 def test_current_user_fields_are_exactly_the_documented_shape(employee):
     payload = base_context(_request(user=employee))["current_user"]
     assert set(payload) == {
-        "emp_id", "name", "role", "is_admin", "is_supervisor", "project", "shift",
+        "emp_id", "name", "role", "is_admin", "is_super_admin", "is_project_admin", "is_team_lead", "is_supervisor", "project", "shift",
     }
 
 

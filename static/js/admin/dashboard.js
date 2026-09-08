@@ -133,7 +133,13 @@ function showContent(tabName, updateHash = true) {
     }
 
     if (!tabName || !VALID_TABS.includes(tabName)) {
-        tabName = 'reports';
+        if (document.getElementById('reports')) {
+            tabName = 'reports';
+        } else if (document.getElementById('orderallocation')) {
+            tabName = 'orderallocation';
+        } else {
+            tabName = 'reports'; // ultimate fallback
+        }
     }
 
     // Hide all tab content
@@ -248,8 +254,8 @@ document.addEventListener("DOMContentLoaded", function () {
         });
         showContent('orderallocation', false);
     } else {
-        // Restore tab from URL hash if available, otherwise default to reports
-        const initialTab = getTabFromHash() || 'reports';
+        // Restore tab from URL hash if available, otherwise pass null to let showContent handle fallback
+        const initialTab = getTabFromHash();
         showContent(initialTab, false);
     }
 
@@ -436,9 +442,9 @@ document.addEventListener("DOMContentLoaded", function () {
                 <td>${emp.joining_date || emp.date_of_joining || '-'}</td>
                 <td>${emp.work_location || emp.department || '-'}</td>
                 <td>${emp.shift_time || emp.shift || '-'}</td>
-                <td><a href="#" class="project-link" data-employee-id="${emp.employee_id}">View Projects</a></td>
-                <td><a href="#" class="empclient-code-link" data-employee-id="${emp.employee_id}">View Client Codes</a></td>
-                <td><a href="#" class="work-type-link" data-employee-id="${emp.employee_id}">View Work Types</a></td>
+                <td><a href="#" class="project-link" style="color: #12b76a; font-weight: 600;" data-employee-id="${emp.employee_id}"><i class="fas fa-project-diagram"></i> ${(emp.project_names && emp.project_names.length) || 0}</a></td>
+                <td><a href="#" class="empclient-code-link" style="color: #12b76a; font-weight: 600;" data-employee-id="${emp.employee_id}"><i class="fas fa-code"></i> ${(emp.client_code_names && emp.client_code_names.length) || 0}</a></td>
+                <td><a href="#" class="work-type-link" style="color: #12b76a; font-weight: 600;" data-employee-id="${emp.employee_id}"><i class="fas fa-list-ul"></i> ${(emp.work_type_names && emp.work_type_names.length) || 0}</a></td>
                 <td><span class="${statusClass}">${emp.status || '-'}</span></td>
                 <td>${emp.active_inactive_date || '-'}</td>
                 <td class="action-buttons">
@@ -577,7 +583,12 @@ document.addEventListener("DOMContentLoaded", function () {
                             document.getElementById("employee-phone").value = data.phone || "";
                             document.getElementById("employee-alternate_phone").value = data.alternate_phone || "";
                             document.getElementById("employee-employee_id").value = data.employee_id;
-                            document.getElementById("employee-role").value = data.role.toLowerCase(); // Map nicely
+                            document.getElementById("employee-employee_id").setAttribute("data-original", data.employee_id);
+                            
+                            const roleSelect = document.getElementById("employee-role");
+                            roleSelect.value = data.role.toLowerCase(); // Map nicely
+                            roleSelect.dispatchEvent(new Event('change'));
+                            
                             document.getElementById("employee-employee_type").value = data.employee_type ? data.employee_type.toLowerCase() : "employee";
                             document.getElementById("employee-joining_date").value = data.joining_date;
                             document.getElementById("employee-work_location").value = data.work_location;
@@ -678,18 +689,11 @@ document.addEventListener("DOMContentLoaded", function () {
         fetchProjects();
         fetchShifts(); // Refresh shifts when opening add modal
         
-        // Fetch next Employee ID for the placeholder
-        const empIdInput = document.getElementById("new-employee-employee_id");
-        empIdInput.placeholder = "Loading...";
-        fetch('/api/v1/auth/employees/next_id/')
-            .then(res => res.json())
-            .then(resp => {
-                empIdInput.placeholder = resp.data?.next_id || resp.next_id || "Auto-generated";
-            })
-            .catch(() => {
-                empIdInput.placeholder = "Auto-generated";
-            });
-            
+        const newRoleSelect = document.getElementById("new-employee-role");
+        if (newRoleSelect) {
+            newRoleSelect.dispatchEvent(new Event('change'));
+        }
+        
         addModal.style.display = "flex";
     });
 
@@ -910,6 +914,33 @@ document.addEventListener("DOMContentLoaded", function () {
         fetchClientCodesForEdit(selectedProjects); // Fetch client codes
     });
 
+    // Handle Employee Type visibility based on Role for Edit form
+    document.getElementById("employee-role").addEventListener("change", function () {
+        const typeGroup = document.getElementById("employee-type-group");
+        if (this.value.toLowerCase() === "employee") {
+            typeGroup.style.display = "block";
+            document.getElementById("employee-employee_type").required = true;
+        } else {
+            typeGroup.style.display = "none";
+            document.getElementById("employee-employee_type").required = false;
+        }
+    });
+
+    // Handle Employee Type visibility based on Role for Add form
+    const newRoleSelect = document.getElementById("new-employee-role");
+    if (newRoleSelect) {
+        newRoleSelect.addEventListener("change", function () {
+            const typeGroup = document.getElementById("new-employee-type-group");
+            if (this.value.toLowerCase() === "employee") {
+                typeGroup.style.display = "block";
+                document.getElementById("new-employee-employee_type").required = true;
+            } else {
+                typeGroup.style.display = "none";
+                document.getElementById("new-employee-employee_type").required = false;
+            }
+        });
+    }
+
     // Event listener for client code selection in edit form
     document.getElementById("employee-client_code").addEventListener("change", function () {
         const selectedClientCodes = Array.from(this.selectedOptions).map(option => option.value);
@@ -1000,6 +1031,10 @@ document.addEventListener("DOMContentLoaded", function () {
         const status = document.getElementById("employee-status").value;
         const activeInactiveDate = document.getElementById("employee-active_inactive_date").value;
 
+        // Get original employee ID for the URL (in case it was changed)
+        const employeeIdInput = document.getElementById("employee-employee_id");
+        const originalEmployeeId = employeeIdInput.getAttribute("data-original") || employeeId;
+
         // Collect selected client codes and join them with '|'
         const clientCodeSelect = document.getElementById("employee-client_code");
         const selectedClientCodes = Array.from(clientCodeSelect.selectedOptions).map(option => option.value).join('|');
@@ -1013,7 +1048,7 @@ document.addEventListener("DOMContentLoaded", function () {
         const selectedWorkTypes = Array.from(workTypeSelect.selectedOptions).map(option => option.value).join('|');
 
         // Send the data in the POST request
-        fetch(`/api/v1/auth/employees/${employeeId}/`, {
+        fetch(`/api/v1/auth/employees/${originalEmployeeId}/`, {
             method: 'PATCH',
             credentials: 'same-origin',
             headers: {
@@ -1056,13 +1091,14 @@ document.addEventListener("DOMContentLoaded", function () {
 
 
     // Show popup when logout button is clicked
-    logoutBtn.addEventListener('click', () => {
+    logoutBtn.addEventListener('click', (e) => {
+        e.preventDefault(); // Stop the form from submitting immediately
         // Check for active work session before allowing logout
         fetch('/api/v1/tracking/sessions/current/')
             .then(response => response.json())
             .then(res => {
-                const data = res.data || res;
-                if (data) {
+                // The API omits 'data' entirely if there is no active session (returns {ok: true})
+                if (res.data) {
                     alert('You have an active work session. Do you want to end it first?');
                     // Do not show logout popup, restrict logout
                     return;

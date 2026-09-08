@@ -68,8 +68,17 @@ class OwnedQuerySet(models.QuerySet):
     def visible_to(self, user):
         if user is None or not user.is_authenticated:
             return self.none()
-        if user.is_supervisor:
+        if user.is_super_admin:
             return self
+        if user.is_project_admin or user.is_team_lead:
+            projects = user.get_authorized_projects()
+            if projects:
+                from django.db.models import Q
+                q_objs = Q()
+                for p in projects:
+                    q_objs |= Q(project__icontains=p)
+                return self.filter(q_objs)
+            return self.for_employee(user.emp_id)
         return self.for_employee(user.emp_id)
 
 

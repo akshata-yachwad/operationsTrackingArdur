@@ -45,6 +45,8 @@
             </ul>
         </li>
         <li><a href="#feedback" onclick="showContent('feedback')" title="Feedback Tab" class="side-nav-btn"><i class="fas fa-comment-dots"></i> <span class="nav-text">Feedbacks</span></a></li>
+        {% endif %}
+        {% if current_user.is_team_lead and not is_title_indexing_only %}
         <li><a href="#orderallocation" onclick="showContent('orderallocation')" title="Order Allocation Tab" class="side-nav-btn">
             <i class="fas fa-tasks"></i> <span class="nav-text">Order Allocation</span>
         </a></li>

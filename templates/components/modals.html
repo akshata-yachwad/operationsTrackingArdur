@@ -146,7 +146,7 @@
                 <div class="form-column">
                     <div class="form-group">
                         <label><i class="fas fa-id-badge"></i> Employee ID:</label>
-                        <input type="text" id="employee-employee_id" required readonly>
+                        <input type="text" id="employee-employee_id" required>
                     </div>
                     <div class="form-group">
                         <label><i class="fas fa-calendar-alt"></i> Joining Date:</label>
@@ -159,7 +159,7 @@
                             <option value="Betul">Betul</option>
                         </select>
                     </div>
-                    <div class="form-group">
+                    <div class="form-group" id="employee-type-group">
                         <label><i class="fas fa-id-card"></i> Employee Type:</label>
                         <select id="employee-employee_type" required>
                             <option value="employee">Employee</option>
@@ -188,8 +188,8 @@
                         <label><i class="fas fa-user-tag"></i> Role:</label>
                         <select id="employee-role" required>
                             <option value="employee">Employee</option>
-                            <option value="supervisor">Supervisor</option>
-                            <option value="admin">Admin</option>
+                            <option value="team_lead">Team Lead</option>
+                            <option value="project_admin">Project Admin</option>
                         </select>
                     </div>
                     <div class="form-group">
@@ -272,7 +272,7 @@
                 <div class="form-column">
                     <div class="form-group">
                         <label><i class="fas fa-id-badge"></i> Employee ID:</label>
-                        <input type="text" id="new-employee-employee_id" placeholder="Auto-generated" readonly>
+                        <input type="text" id="new-employee-employee_id" placeholder="Enter Employee ID" required>
                     </div>
                     <div class="form-group">
                         <label><i class="fas fa-calendar-alt"></i> Joining Date:</label>
@@ -285,7 +285,7 @@
                             <option value="Betul">Betul</option>
                         </select>
                     </div>
-                    <div class="form-group">
+                    <div class="form-group" id="new-employee-type-group">
                         <label><i class="fas fa-id-card"></i> Employee Type:</label>
                         <select id="new-employee-employee_type" required>
                             <option value="employee">Employee</option>
@@ -314,8 +314,8 @@
                         <label><i class="fas fa-user-tag"></i> Role:</label>
                         <select id="new-employee-role" required>
                             <option value="employee">Employee</option>
-                            <option value="supervisor">Supervisor</option>
-                            <option value="admin">Admin</option>
+                            <option value="team_lead">Team Lead</option>
+                            <option value="project_admin">Project Admin</option>
                         </select>
                     </div>
                     <div class="form-group">
@@ -512,5 +512,26 @@
             <button class="end-popup-cancel">Cancel</button>
             <button class="end-popup-submit">Submit</button>
         </div>
+    </div>
+</div>
+
+<!-- Cancel Order Popup -->
+<div id="cancel-order-popup" class="modal hidden">
+    <div class="modal-content" style="max-width: 450px; padding: 25px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #ddd; padding-bottom: 15px; margin-bottom: 15px;">
+            <h3 style="margin: 0; color: #2c3e50;"><i class="fas fa-ban"></i> Cancel Order</h3>
+            <span class="close-btn" id="close-cancel-order" style="cursor: pointer; font-size: 20px;">&times;</span>
+        </div>
+        <form id="cancel-order-form">
+            <p style="margin-bottom: 15px; font-size: 14px; color: #555;">Are you sure you want to cancel this order? This cannot be undone.</p>
+            <div class="form-group" style="margin-bottom: 20px;">
+                <label for="cancel-reason" style="display: block; margin-bottom: 8px; font-weight: bold;"><i class="fas fa-comment-dots"></i> Reason for Cancellation</label>
+                <textarea id="cancel-reason" required rows="4" placeholder="Please provide a reason..." style="width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; resize: vertical; font-family: inherit;"></textarea>
+            </div>
+            <div style="display: flex; justify-content: flex-end; gap: 10px;">
+                <button type="button" class="btn-secondary" id="cancel-order-dismiss" style="padding: 8px 16px; border: 1px solid #ccc; border-radius: 4px; background: #f8f9fa; cursor: pointer;">Back</button>
+                <button type="submit" class="btn-primary" style="padding: 8px 16px; border: none; border-radius: 4px; background: #c62828; color: white; cursor: pointer;"><i class="fas fa-trash-alt"></i> Cancel Order</button>
+            </div>
+        </form>
     </div>
 </div>

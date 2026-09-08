@@ -33,22 +33,32 @@ document.addEventListener("DOMContentLoaded", function () {
 
     // Handle confirm logout
     confirmLogout.addEventListener('click', () => {
-        fetch('/api/v1/auth/logout/', {
+        sessionStorage.removeItem('softwareShiftRunning');
+        
+        // Pause software shift if running before destroying the session
+        fetch('/api/v1/tracking/software-shifts/pause/', {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json',
                 'X-CSRFToken': (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || document.querySelector('[name=csrfmiddlewaretoken]')?.value || ''
             }
-        })
-        .then(response => {
-            if (response.ok) {
-                window.location.href = '/login/'; // Redirect to login page
-            } else {
-                alert('Error logging out. Please try again.');
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
+        }).finally(() => {
+            fetch('/api/v1/auth/logout/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || document.querySelector('[name=csrfmiddlewaretoken]')?.value || ''
+                }
+            })
+            .then(response => {
+                if (response.ok) {
+                    window.location.href = '/login/'; // Redirect to login page
+                } else {
+                    alert('Error logging out. Please try again.');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+            });
         });
     });
 
@@ -230,9 +240,11 @@ fetch('/api/v1/masters/selections/')
     .catch(error => console.error('Error fetching user selections:', error));
 
 // Handle Project Selection
-document.getElementById('project-select').addEventListener('change', function () {
-    const selectedProject = this.value;
-    const workUnitsLabel = document.querySelector('label[for="work-units"]');
+const projectSelectEl = document.getElementById('project-select');
+if (projectSelectEl) {
+    projectSelectEl.addEventListener('change', function () {
+        const selectedProject = this.value;
+        const workUnitsLabel = document.querySelector('label[for="work-units"]');
     const pagesLabel = document.getElementById('pages-label');
     const pagesInput = document.getElementById('pages');
 
@@ -277,36 +289,40 @@ document.getElementById('project-select').addEventListener('change', function ()
         document.getElementById('work-type-select').innerHTML = '<option value="">Select Work Type</option>';
     }
 });
+}
 
 // Handle Client Code Selection
-document.getElementById('client-code-select').addEventListener('change', function () {
-const selectedClientCode = this.value;
+const clientCodeSelectEl = document.getElementById('client-code-select');
+if (clientCodeSelectEl) {
+    clientCodeSelectEl.addEventListener('change', function () {
+    const selectedClientCode = this.value;
 
-// If a client code is selected, enable and fetch work types
-if (selectedClientCode) {
-    document.getElementById('work-type-select').disabled = false;
+    // If a client code is selected, enable and fetch work types
+    if (selectedClientCode) {
+        document.getElementById('work-type-select').disabled = false;
 
-    // Fetch work types for the selected client code
-    fetch(`/get_work_types_for_client_code?client_code=${selectedClientCode}`)
-        .then(response => response.json())
-        .then(data => {
-            const workTypeSelect = document.getElementById('work-type-select');
-            workTypeSelect.innerHTML = '<option value="">Select Work Type</option>';  // Clear previous options
+        // Fetch work types for the selected client code
+        fetch(`/get_work_types_for_client_code?client_code=${selectedClientCode}`)
+            .then(response => response.json())
+            .then(data => {
+                const workTypeSelect = document.getElementById('work-type-select');
+                workTypeSelect.innerHTML = '<option value="">Select Work Type</option>';  // Clear previous options
 
-            data.work_types.forEach(workType => {
-                const option = document.createElement('option');
-                option.value = workType;
-                option.textContent = workType;
-                workTypeSelect.appendChild(option);
-            });
-        })
-        .catch(error => console.error('Error fetching work types:', error));
-} else {
-    // Reset and disable work type select if no client code is selected
-    document.getElementById('work-type-select').disabled = true;
-    document.getElementById('work-type-select').innerHTML = '<option value="">Select Work Type</option>';
+                data.work_types.forEach(workType => {
+                    const option = document.createElement('option');
+                    option.value = workType;
+                    option.textContent = workType;
+                    workTypeSelect.appendChild(option);
+                });
+            })
+            .catch(error => console.error('Error fetching work types:', error));
+    } else {
+        // Reset and disable work type select if no client code is selected
+        document.getElementById('work-type-select').disabled = true;
+        document.getElementById('work-type-select').innerHTML = '<option value="">Select Work Type</option>';
+    }
+    });
 }
-});
 
 function showContent(contentId) {
     // Hide all content sections first

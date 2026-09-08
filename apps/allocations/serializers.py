@@ -10,6 +10,7 @@ from apps.allocations.models import (
     OrderHistory,
     Priority,
     OrderRate,
+    TitleIndexingSession,
 )
 from core.validators import validate_emp_id
 
@@ -55,7 +56,7 @@ class AllocationSerializer(serializers.ModelSerializer):
             "owner_name", "property_address", "state", "county", "search_type",
             "fees", "margin", "vendor_rate", # "document_file",
             "document_name", "received_date", "eta",
-            "employee_comments", "qc_id", "qc_name", "qc_comments", "time_taken", "ar_number",
+            "employee_comments", "qc_id", "qc_name", "qc_comments", "search_time_taken", "qc_time_taken", "ar_number",
             "batch_documents",
             "chain_sheet_name", "search_package_name", "report_name", "general_instructions",
             "dispatch_date"
@@ -63,12 +64,12 @@ class AllocationSerializer(serializers.ModelSerializer):
         read_only_fields = [
             "id", "progress_percent", "is_overdue", "is_open",
             "allocated_by", "allocated_at", "started_at", "completed_at",
-            "time_taken", "ar_number", "dispatch_date"
+            "search_time_taken", "qc_time_taken", "ar_number", "dispatch_date"
         ]
 
 
 class AllocationWriteSerializer(serializers.ModelSerializer):
-    allocation_id = serializers.CharField(max_length=50)
+    allocation_id = serializers.CharField(max_length=50, required=False)
     # employee_id is optional at creation time — orders can be created first
     # and assigned to an employee later via the inline table assignment.
     employee_id = serializers.CharField(
@@ -97,6 +98,30 @@ class AllocationWriteSerializer(serializers.ModelSerializer):
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
             update_fields.append(attr)
+        
+        # If QC is assigned to an order that was in COMPLETED (Search Complete) status, transition to READY_FOR_QC
+        if "qc_id" in validated_data and validated_data["qc_id"]:
+            if instance.status == AllocationStatus.COMPLETED:
+                from_status = instance.status
+                instance.status = AllocationStatus.READY_FOR_QC
+                update_fields.append("status")
+                try:
+                    from core.utils import now_ist
+                    req = self.context.get("request")
+                    emp_actor = req.user.emp_id if req and hasattr(req, "user") and hasattr(req.user, "emp_id") else "admin"
+                    OrderHistory.objects.create(
+                        allocation_id=instance.allocation_id,
+                        order_id=instance.order_id,
+                        employee_id=instance.employee_id,
+                        action="status_ready_for_qc",
+                        from_status=from_status,
+                        to_status=AllocationStatus.READY_FOR_QC,
+                        remarks=f"QC assigned to {instance.qc_name or instance.qc_id}",
+                        performed_by=emp_actor,
+                        created_at=now_ist(),
+                    )
+                except Exception:
+                    pass
         
         if update_fields:
             instance.save(update_fields=update_fields)
@@ -159,3 +184,20 @@ class OrderRateSerializer(serializers.ModelSerializer):
             "vendor_rts", "eta_rts", "vendor_slt", "eta_slt", "remark",
         ]
         read_only_fields = fields
+
+
+class TitleIndexingSessionSerializer(serializers.ModelSerializer):
+    employee_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = TitleIndexingSession
+        fields = [
+            "id", "employee_id", "employee_name", "project", "client_code", "work_type",
+            "started_at", "completed_at", "time_taken",
+            "work_units_completed", "status"
+        ]
+
+    def get_employee_name(self, obj):
+        from apps.accounts.models import Employee
+        emp = Employee.objects.filter(employee_id=obj.employee_id).first()
+        return emp.name if emp else obj.employee_id

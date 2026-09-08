@@ -33,9 +33,10 @@ async function boot() {
   // how a user ends up trusting a stale screen.
   let offlineToast = null;
   bus.on("realtime:closed", () => {
-    if (!offlineToast) {
-      offlineToast = toast.warning("Reconnecting…", { timeout: 0 });
-    }
+    // TEMPORARILY DISABLED: Suppress "Reconnecting..." toast on cPanel
+    // if (!offlineToast) {
+    //   offlineToast = toast.warning("Reconnecting…", { timeout: 0 });
+    // }
   });
   bus.on("realtime:open", () => {
     if (offlineToast) {

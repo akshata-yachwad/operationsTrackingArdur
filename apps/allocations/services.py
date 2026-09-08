@@ -26,9 +26,18 @@ class AllocationService(BaseService):
         self.require_supervisor("Only a supervisor can allocate work.")
 
         allocation_id = data.get("allocation_id")
-        if allocation_id and BatchAllocation.objects.filter(
-            allocation_id=allocation_id
-        ).exists():
+        if not allocation_id:
+            last = BatchAllocation.objects.order_by("-pk").first()
+            if not last or not last.allocation_id.startswith("Task-"):
+                allocation_id = "Task-000001"
+            else:
+                try:
+                    num = int(last.allocation_id.replace("Task-", ""))
+                    allocation_id = f"Task-{num + 1:06d}"
+                except ValueError:
+                    allocation_id = "Task-000001"
+            data["allocation_id"] = allocation_id
+        elif BatchAllocation.objects.filter(allocation_id=allocation_id).exists():
             raise ConflictError(f"Allocation {allocation_id} already exists.")
 
         if not data.get("ar_number"):
@@ -98,9 +107,13 @@ class AllocationService(BaseService):
                 )
             allocation.completed_quantity = completed_quantity
 
-        if status == AllocationStatus.IN_PROGRESS and not allocation.started_at:
+        if status == AllocationStatus.SEARCH_IN_PROGRESS and not allocation.started_at:
             allocation.started_at = now_ist()
-        if status in (AllocationStatus.COMPLETED, AllocationStatus.SEND_FOR_QC, AllocationStatus.DISPATCH) and not allocation.completed_at:
+            
+        if status == AllocationStatus.QC_IN_PROGRESS and not allocation.qc_started_at:
+            allocation.qc_started_at = now_ist()
+
+        if status in (AllocationStatus.COMPLETED, AllocationStatus.READY_FOR_QC, AllocationStatus.DISPATCH) and not allocation.completed_at:
             allocation.completed_at = now_ist()
             if allocation.started_at:
                 delta = allocation.completed_at - allocation.started_at
@@ -113,7 +126,20 @@ class AllocationService(BaseService):
                     parts.append(f"{hours}h")
                 if minutes > 0 or hours == 0:
                     parts.append(f"{minutes}m")
-                allocation.time_taken = " ".join(parts)
+                allocation.search_time_taken = " ".join(parts)
+
+        if status == AllocationStatus.DISPATCH and allocation.qc_started_at and not allocation.qc_time_taken:
+            delta = now_ist() - allocation.qc_started_at
+            total_seconds = int(delta.total_seconds())
+            hours, remainder = divmod(total_seconds, 3600)
+            minutes, _ = divmod(remainder, 60)
+            
+            parts = []
+            if hours > 0:
+                parts.append(f"{hours}h")
+            if minutes > 0 or hours == 0:
+                parts.append(f"{minutes}m")
+            allocation.qc_time_taken = " ".join(parts)
 
         if remarks:
             allocation.remarks = remarks[:500]
@@ -136,7 +162,8 @@ class AllocationService(BaseService):
 
         update_fields = [
             "status", "completed_quantity", "started_at", "completed_at", 
-            "remarks", "employee_comments", "qc_comments", "time_taken"
+            "remarks", "employee_comments", "qc_comments", "search_time_taken",
+            "qc_time_taken", "qc_started_at"
         ]
         # if chain_sheet:
         #     update_fields.extend(['chain_sheet', 'chain_sheet_name'])
@@ -164,7 +191,13 @@ class AllocationService(BaseService):
 
         previous = allocation.status
         allocation.status = AllocationStatus.CANCELLED
-        allocation.remarks = (reason or allocation.remarks)[:500]
+        
+        cancel_note = f"[CANCEL REASON]: {reason}" if reason else "[CANCELLED]"
+        if allocation.remarks and cancel_note not in allocation.remarks:
+            allocation.remarks = f"{allocation.remarks}\n\n{cancel_note}"[:500]
+        else:
+            allocation.remarks = cancel_note[:500]
+            
         allocation.save(update_fields=["status", "remarks"])
 
         self._record(allocation, "cancelled", from_status=previous,

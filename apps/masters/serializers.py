@@ -52,7 +52,7 @@ class ProjectSerializer(serializers.ModelSerializer):
         fields = [
             "id", "project_id", "project_name", "project_code", "client_name",
             "client_code", "worktypes",
-            "start_date", "end_date", "is_active", "created_at", "updated_at",
+            "start_date", "end_date", "requires_attendance", "is_simplified_project", "is_active", "created_at", "updated_at",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
 

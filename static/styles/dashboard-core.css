@@ -525,3 +525,14 @@ button:disabled {
         padding: 8px 15px;
     }
 }
+
+/* Responsive Scaling for smaller screens / Windows 125% scaling */
+@media screen and (max-width: 1440px) {
+    body { zoom: 0.9; }
+}
+@media screen and (max-width: 1366px) {
+    body { zoom: 0.8; }
+}
+@media screen and (max-width: 1200px) {
+    body { zoom: 0.75; }
+}

@@ -11,8 +11,8 @@ from core.timezone import now_ist
 
 class AllocationStatus(models.TextChoices):
     PENDING = "pending", "Pending"
-    IN_PROGRESS = "in_progress", "In progress"
-    SEND_FOR_QC = "send_for_qc", "Send for QC"
+    SEARCH_IN_PROGRESS = "search_in_progress", "Search In Progress"
+    READY_FOR_QC = "ready_for_qc", "Ready for QC"
     QC_IN_PROGRESS = "qc_in_progress", "QC In Progress"
     COMPLETED = "completed", "Completed"
     DISPATCH = "dispatch", "Dispatch"
@@ -39,7 +39,7 @@ class AllocationQuerySet(OwnedQuerySet):
 
     def open(self):
         return self.filter(
-            status__in=(AllocationStatus.PENDING, AllocationStatus.IN_PROGRESS, AllocationStatus.SEND_FOR_QC, AllocationStatus.QC_IN_PROGRESS)
+            status__in=(AllocationStatus.PENDING, AllocationStatus.SEARCH_IN_PROGRESS, AllocationStatus.READY_FOR_QC, AllocationStatus.QC_IN_PROGRESS)
         )
 
     def open_or_completed_today(self):
@@ -48,7 +48,7 @@ class AllocationQuerySet(OwnedQuerySet):
         today_start = now_ist().replace(hour=0, minute=0, second=0, microsecond=0)
         today_end = today_start + datetime.timedelta(days=1)
         return self.filter(
-            Q(status__in=(AllocationStatus.PENDING, AllocationStatus.IN_PROGRESS, AllocationStatus.SEND_FOR_QC, AllocationStatus.QC_IN_PROGRESS)) |
+            Q(status__in=(AllocationStatus.PENDING, AllocationStatus.SEARCH_IN_PROGRESS, AllocationStatus.READY_FOR_QC, AllocationStatus.QC_IN_PROGRESS)) |
             Q(status__in=[AllocationStatus.COMPLETED, AllocationStatus.DISPATCH], completed_at__gte=today_start, completed_at__lt=today_end)
         )
 
@@ -126,7 +126,9 @@ class BatchAllocation(models.Model):
     qc_id = models.CharField(max_length=20, blank=True, null=True, db_index=True)
     qc_name = models.CharField(max_length=100, blank=True, null=True)
     qc_comments = models.TextField(blank=True, null=True)
-    time_taken = models.CharField(max_length=100, blank=True, default="")
+    search_time_taken = models.CharField(max_length=100, blank=True, default="")
+    qc_time_taken = models.CharField(max_length=100, blank=True, default="")
+    qc_started_at = models.DateTimeField(null=True, blank=True)
     ar_number = models.CharField(max_length=20, blank=True, null=True, unique=True)
     sla_notified = models.BooleanField(default=False)
 
@@ -157,7 +159,7 @@ class BatchAllocation(models.Model):
 
     @property
     def is_open(self) -> bool:
-        return self.status in (AllocationStatus.PENDING, AllocationStatus.IN_PROGRESS, AllocationStatus.QC_IN_PROGRESS)
+        return self.status in (AllocationStatus.PENDING, AllocationStatus.SEARCH_IN_PROGRESS, AllocationStatus.QC_IN_PROGRESS)
 
     @property
     def progress_percent(self) -> float:
@@ -219,3 +221,34 @@ class OrderRate(models.Model):
 
     def __str__(self) -> str:
         return f"{self.order_type} - {self.state} - {self.county}"
+
+
+class TitleIndexingSession(models.Model):
+    """Tracking sessions and work units for Title Indexing."""
+
+    id = models.AutoField(primary_key=True)
+    employee_id = models.CharField(max_length=20, db_index=True)
+    project = models.CharField(max_length=150, default="Title Indexing")
+    client_code = models.CharField(max_length=50)
+    work_type = models.CharField(max_length=100)
+    
+    # Session tracking
+    started_at = models.DateTimeField(default=now_ist)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    time_taken = models.CharField(max_length=100, blank=True)
+    
+    # Indexing specific metrics
+    work_units_completed = models.IntegerField(default=0)
+    status = models.CharField(
+        max_length=20, 
+        choices=[('IN_PROGRESS', 'In Progress'), ('COMPLETED', 'Completed')],
+        default='IN_PROGRESS'
+    )
+
+    class Meta:
+        # Not setting managed = legacy_managed() since this is a new table
+        db_table = "ot_title_indexing_sessions"
+        ordering = ["-started_at"]
+
+    def __str__(self) -> str:
+        return f"Session {self.id} for {self.employee_id} ({self.status})"

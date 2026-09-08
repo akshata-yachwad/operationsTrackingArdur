@@ -121,6 +121,7 @@ class EmployeeViewSet(ServiceMixin, EnvelopeMixin, viewsets.ModelViewSet):
     search_fields = ["employee_id", "name", "email", "project", "designation"]
     ordering_fields = ["name", "employee_id", "role", "date_of_joining"]
     ordering = ["name"]
+    pagination_class = None
 
     def get_permissions(self):
         if self.action in ("list", "retrieve"):
@@ -134,6 +135,20 @@ class EmployeeViewSet(ServiceMixin, EnvelopeMixin, viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = super().get_queryset()
+        user = self.request.user
+        
+        if not user.is_super_admin:
+            projects = user.get_authorized_projects()
+            if projects:
+                from django.db.models import Q
+                q_objs = Q()
+                for p in projects:
+                    q_objs |= Q(project__icontains=p)
+                queryset = queryset.filter(q_objs)
+            else:
+                # If no authorized projects (e.g. basic employee), only see themselves
+                queryset = queryset.filter(employee_id=user.emp_id)
+
         if self.request.query_params.get("active") == "true":
             queryset = queryset.active()
         if role := self.request.query_params.get("role"):
@@ -142,10 +157,7 @@ class EmployeeViewSet(ServiceMixin, EnvelopeMixin, viewsets.ModelViewSet):
             queryset = queryset.filter(project__icontains=project)
         return queryset
 
-    from rest_framework.decorators import action
-    @action(detail=False, methods=["get"])
-    def next_id(self, request):
-        return self.ok({"next_id": Employee.generate_employee_id()})
+
 
     def perform_create(self, serializer):
         serializer.instance = self.service.create(dict(serializer.validated_data))

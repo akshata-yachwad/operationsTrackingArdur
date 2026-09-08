@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from apps.tracking.models import Target, WorkSession
+from apps.tracking.models import Target, WorkSession, Attendance
 
 
 @admin.register(WorkSession)
@@ -25,3 +25,13 @@ class TargetAdmin(admin.ModelAdmin):
     list_filter = ("target_date", "project")
     search_fields = ("emp_id", "project")
     # date_hierarchy = "target_date"
+
+
+@admin.register(Attendance)
+class AttendanceAdmin(admin.ModelAdmin):
+    list_display = (
+        "emp_id", "date", "status", "first_login", "last_logout", "total_break_time"
+    )
+    list_filter = ("status", "date")
+    search_fields = ("emp_id",)
+    ordering = ("-date",)

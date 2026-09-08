@@ -364,3 +364,49 @@ button:focus-visible, a:focus-visible {
   min-width: 40px;
   text-align: right;
 }
+
+/* =========================================================
+   Responsive adjustments for portrait monitors & narrow screens 
+   (e.g. 1080px - 1400px width)
+   ========================================================= */
+@media (max-width: 1400px) {
+  /* Allow horizontal scrolling for all main data tables to prevent cropping */
+  .allocated-orders-section, 
+  #allocated-orders-panel,
+  .table-responsive-wrapper,
+  .table, 
+  .break-table, 
+  .feedback-table,
+  table {
+    display: block;
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  
+  /* Make the Order Allocation form grid fluid */
+  .form-grid-container {
+    display: grid !important;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)) !important;
+    gap: 1rem;
+  }
+  
+  /* Make Edit Order modal constraints fluid */
+  .modal-content, 
+  .oa-details-popup .oa-details-container {
+    max-width: 95vw !important;
+    width: 100% !important;
+    margin: 10px auto;
+  }
+
+  /* Make Edit Order Modal internal grids wrap */
+  .oa-details-grid {
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)) !important;
+  }
+
+  /* Make generic form grids fluid */
+  .form-grid {
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)) !important;
+  }
+}
+

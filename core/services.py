@@ -73,11 +73,35 @@ class BaseService:
             raise PermissionDeniedError("This action requires a signed-in user.")
         return self.actor
 
-    def require_supervisor(self, message: str = "Only a supervisor can do that.") -> None:
-        self.require(self.require_actor().is_supervisor, message)
+    def require_team_lead(self, message: str = "Only a team lead can do that.") -> None:
+        self.require(self.require_actor().is_team_lead, message)
 
-    def require_admin(self, message: str = "Only an administrator can do that.") -> None:
-        self.require(self.require_actor().is_admin, message)
+    def require_project_admin(self, message: str = "Only a project admin can do that.") -> None:
+        self.require(self.require_actor().is_project_admin, message)
+
+    def require_super_admin(self, message: str = "Only a super admin can do that.") -> None:
+        self.require(self.require_actor().is_super_admin, message)
+
+    # Aliases for backward compatibility while migrating
+    def require_supervisor(self, message: str = "Only a project admin can do that.") -> None:
+        self.require_project_admin(message)
+
+    def require_admin(self, message: str = "Only a super admin can do that.") -> None:
+        self.require_super_admin(message)
+
+    def check_project_access(self, project: str) -> bool:
+        """Returns True if the actor has access to this project."""
+        actor = self.require_actor()
+        if actor.is_super_admin:
+            return True
+        # If the project is a comma/pipe separated string, we might need to check if any overlaps.
+        # But for creation/assignment, it's usually one project being assigned.
+        authorized = actor.get_authorized_projects()
+        return project in authorized
+
+    def require_project_access(self, project: str, message: str = "You do not have access to this project.") -> None:
+        # if project is empty, maybe allow? No, require explicit.
+        self.require(self.check_project_access(project), message)
 
     def require_owner_or_supervisor(self, owner_emp_id: str,
                                     message: str = "That record belongs to someone else.") -> None:

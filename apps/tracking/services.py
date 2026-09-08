@@ -211,6 +211,66 @@ class WorkSessionService(BaseService):
             )
         )
 
+    @transaction.atomic
+    def indexing_submit(self, session_id: int, units: int) -> dict:
+        """Submit multiple units for an indexing session, end the session, and start a new one."""
+        session = self._locked_open_session(session_id)
+        
+        # End the current session without rolling up 1 unit automatically
+        end = now_ist()
+        gross = elapsed_seconds(session.start_time, end)
+        paused_elapsed = float(session.paused_elapsed) if session.paused_elapsed else 0.0
+        if session.is_paused and session.paused_at:
+            paused_elapsed += elapsed_seconds(session.paused_at, end)
+        
+        total = max(gross - paused_elapsed, 0.0)
+        session.end_time = end
+        session.total_time = round(total, 2)
+        session.paused_elapsed = round(paused_elapsed, 2)
+        session.is_started = SessionState.COMPLETED
+        session.is_paused = False
+        session.paused_at = None
+        session.save(update_fields=[
+            "end_time", "total_time", "paused_elapsed",
+            "is_started", "is_paused", "paused_at"
+        ])
+
+        # Roll up the specific number of units
+        from core.timezone import today_ist
+        target, _ = Target.objects.get_or_create(
+            emp_id=session.emp_id, 
+            project=session.project, 
+            target_date=today_ist(),
+            defaults={"target_units": 0, "work_type": session.work_type or "INDEXING"}
+        )
+        was_met = target.is_met
+        Target.objects.filter(pk=target.pk).update(
+            achieved_units=models.F('achieved_units') + units,
+            updated_at=now_ist(),
+        )
+        target.refresh_from_db()
+        if target.is_met and not was_met:
+            self.on_commit(lambda: self._notify_target_met(session, target))
+            
+        self.log("session_ended", id=session.id, total_time=session.total_time, units=units)
+        self.on_commit(lambda: self._announce(session, "work.session.ended"))
+
+        # Start a new session automatically
+        new_session = self.start_session(
+            emp_id=session.emp_id,
+            project=session.project,
+            client_code=session.client_code,
+            work_type=session.work_type,
+            batch=session.batch,
+            allocation_id=session.allocation_id
+        )
+
+        return {
+            "ended_session": session,
+            "new_session": new_session,
+            "units_submitted": units
+        }
+
     # ── internals ────────────────────────────────────────────
 
     def _locked_open_session(self, session_id: int) -> WorkSession:

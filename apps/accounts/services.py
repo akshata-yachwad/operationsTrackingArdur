@@ -133,6 +133,36 @@ class AuthService(BaseService):
                 TrackingService(actor=self.actor).stop_session(active.id)
         except Exception:
             pass
+            
+        # Try stopping any active Title Indexing Session
+        try:
+            from apps.allocations.models import TitleIndexingSession
+            active_idx = TitleIndexingSession.objects.filter(employee_id=emp_id, status='IN_PROGRESS').first()
+            if active_idx:
+                active_idx.status = 'COMPLETED'
+                active_idx.completed_at = now_ist()
+                
+                # Calculate time taken
+                diff = active_idx.completed_at - active_idx.started_at
+                total_seconds = int(diff.total_seconds())
+                hours = total_seconds // 3600
+                minutes = (total_seconds % 3600) // 60
+                seconds = total_seconds % 60
+                active_idx.time_taken = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+                
+                active_idx.save()
+        except Exception:
+            pass
+
+        # Try stopping any active BreakTime
+        try:
+            from apps.breaks.services import BreakService
+            from apps.breaks.models import BreakTime
+            brk = BreakTime.objects.filter(user_id=emp_id, end_time__isnull=True).first()
+            if brk:
+                BreakService(actor=self.actor).force_end_break(brk.id)
+        except Exception:
+            pass
 
     def change_password(self, user: User, current_password: str, new_password: str) -> None:
         if not user.check_password(current_password):
@@ -206,22 +236,26 @@ class EmployeeService(BaseService):
 
     @transaction.atomic
     def create(self, data: dict) -> Employee:
-        self.require_supervisor("Only a supervisor can add an employee.")
+        self.require_project_admin("Only a project admin or super admin can add an employee.")
+
+        if self.actor and not self.actor.is_super_admin:
+            projects = [p.strip() for p in data.get("project", "").split("|") if p.strip()]
+            for p in projects:
+                self.require_project_access(p, f"You cannot assign employees to project {p}.")
 
         password = data.pop("password", None)
         employee_id = data.get("employee_id")
         
         if not employee_id:
-            employee_id = Employee.generate_employee_id()
-            data["employee_id"] = employee_id
+            raise ValidationError("Employee ID is required.")
 
         if Employee.objects.filter(employee_id=employee_id).exists():
             raise ConflictError(f"An employee with ID {employee_id} already exists.")
 
-        # Only an admin may mint another admin. Without this a supervisor can
-        # escalate to admin by creating one and logging in as it.
-        if data.get("role") == "admin":
-            self.require_admin("Only an administrator can create an administrator.")
+        # Only a super admin may mint a super admin or project admin.
+        # Without this a project admin can escalate to super admin.
+        if data.get("role") in ("super_admin", "project_admin"):
+            self.require_super_admin("Only a super admin can create a project admin or super admin.")
 
         employee = Employee.objects.create(**data)
 
@@ -235,11 +269,22 @@ class EmployeeService(BaseService):
 
     @transaction.atomic
     def update(self, employee: Employee, data: dict) -> Employee:
-        self.require_supervisor("Only a supervisor can change an employee record.")
+        self.require_project_admin("Only a project admin or super admin can change an employee record.")
+
+        if self.actor and not self.actor.is_super_admin:
+            # Must have access to the employee's existing projects
+            existing_projects = [p.strip() for p in employee.project.split("|") if p.strip()]
+            for p in existing_projects:
+                self.require_project_access(p, f"You cannot modify employees in project {p}.")
+            
+            # Must have access to the new projects
+            new_projects = [p.strip() for p in data.get("project", "").split("|") if p.strip()]
+            for p in new_projects:
+                self.require_project_access(p, f"You cannot assign employees to project {p}.")
 
         new_role = data.get("role")
-        if new_role and new_role != employee.role and "admin" in (new_role, employee.role):
-            self.require_admin("Only an administrator can change an administrator role.")
+        if new_role and new_role != employee.role and ("super_admin" in (new_role, employee.role) or "project_admin" in (new_role, employee.role)):
+            self.require_super_admin("Only a super admin can change an admin's role.")
 
         data.pop("password", None)  # password changes go through AuthService
         for field, value in data.items():
@@ -263,7 +308,12 @@ class EmployeeService(BaseService):
         feedback row that references their emp_id, and silently changes last
         month's reports.
         """
-        self.require_admin("Only an administrator can deactivate an employee.")
+        self.require_project_admin("Only a project admin or super admin can deactivate an employee.")
+
+        if self.actor and not self.actor.is_super_admin:
+            existing_projects = [p.strip() for p in employee.project.split("|") if p.strip()]
+            for p in existing_projects:
+                self.require_project_access(p, f"You cannot deactivate employees in project {p}.")
 
         if self.actor and employee.employee_id == self.actor.emp_id:
             raise ValidationError("You cannot deactivate your own account.")

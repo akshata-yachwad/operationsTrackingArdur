@@ -18,6 +18,24 @@ from core.timezone import elapsed_seconds, now_ist
 class BreakQuerySet(OwnedQuerySet):
     owner_field = "user_id"
 
+    def visible_to(self, user):
+        if user is None or not user.is_authenticated:
+            return self.none()
+        if user.is_super_admin:
+            return self
+        if user.is_project_admin or user.is_team_lead:
+            projects = user.get_authorized_projects()
+            if projects:
+                from apps.accounts.models import Employee
+                from django.db.models import Q
+                q_objs = Q()
+                for p in projects:
+                    q_objs |= Q(project__icontains=p)
+                team_emp_ids = Employee.objects.filter(q_objs).values_list('employee_id', flat=True)
+                return self.filter(user_id__in=team_emp_ids)
+            return self.filter(user_id=user.emp_id)
+        return self.filter(user_id=user.emp_id)
+
     def open(self):
         return self.filter(end_time__isnull=True)
 

@@ -77,6 +77,30 @@ class WorkTypeViewSet(BaseMasterViewSet):
     search_fields = ["work_type", "description"]
     ordering_fields = ["work_type", "created_at"]
 
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        user = self.request.user
+        if getattr(user, 'is_project_admin', False) and not getattr(user, 'is_super_admin', False):
+            authorized = user.get_authorized_projects()
+            if authorized:
+                from apps.masters.models import Project
+                from django.db.models import Q
+                q_objs = Q()
+                for p in authorized:
+                    q_objs |= Q(project_id__iexact=p) | Q(project_name__iexact=p)
+                projects = Project.objects.filter(q_objs)
+                allowed_wt_names = set()
+                for proj in projects:
+                    if proj.worktypes:
+                        allowed_wt_names.update([w.strip() for w in proj.worktypes.split("|") if w.strip()])
+                if allowed_wt_names:
+                    queryset = queryset.filter(work_type__in=allowed_wt_names)
+                else:
+                    queryset = queryset.none()
+            else:
+                queryset = queryset.none()
+        return queryset
+
     @action(detail=False, methods=["get"], url_path="next-id")
     def next_id(self, request):
         """Return the next auto-generated wt_id (replaces /next_worktype_id)."""
@@ -96,6 +120,21 @@ class ProjectViewSet(BaseMasterViewSet):
     search_fields = ["project_name", "project_code", "client_name"]
     ordering_fields = ["project_name", "start_date", "created_at"]
 
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        user = self.request.user
+        if getattr(user, 'is_project_admin', False) and not getattr(user, 'is_super_admin', False):
+            authorized = user.get_authorized_projects()
+            if authorized:
+                from django.db.models import Q
+                q_objs = Q()
+                for p in authorized:
+                    q_objs |= Q(project_id__iexact=p) | Q(project_name__iexact=p)
+                queryset = queryset.filter(q_objs)
+            else:
+                queryset = queryset.none()
+        return queryset
+
     @action(detail=False, methods=["get"], url_path="next-id")
     def next_id(self, request):
         """Return the next auto-generated project_id (replaces /get_next_project_id)."""
@@ -114,6 +153,21 @@ class ClientCodeViewSet(BaseMasterViewSet):
     lookup_field = "cc_id"
     search_fields = ["client_code", "client_name", "project"]
     ordering_fields = ["client_code", "created_at"]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        user = self.request.user
+        if getattr(user, 'is_project_admin', False) and not getattr(user, 'is_super_admin', False):
+            authorized = user.get_authorized_projects()
+            if authorized:
+                from django.db.models import Q
+                q_objs = Q()
+                for p in authorized:
+                    q_objs |= Q(project__icontains=p)
+                queryset = queryset.filter(q_objs)
+            else:
+                queryset = queryset.none()
+        return queryset
 
     @action(detail=False, methods=["get"], url_path="next-id")
     def next_id(self, request):
@@ -248,7 +302,12 @@ class EmpGetProjectsView(EnvelopeMixin, APIView):
     """GET /api/v1/masters/emp_get_projects/"""
     permission_classes = [IsAuthenticatedEmployee]
     def get(self, request):
-        return self.ok({"projects": active_projects()})
+        projects = active_projects()
+        user = request.user
+        if getattr(user, 'is_project_admin', False) and not getattr(user, 'is_super_admin', False):
+            authorized = set(user.get_authorized_projects())
+            projects = [p for p in projects if p['project_id'] in authorized or p['project_name'] in authorized]
+        return self.ok({"projects": projects})
 
 class EmpGetClientCodesView(EnvelopeMixin, APIView):
     """POST /api/v1/masters/emp_get_client_codes/"""
