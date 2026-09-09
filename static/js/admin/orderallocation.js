@@ -18,7 +18,15 @@ let cancelForm = null;
 
 document.addEventListener('DOMContentLoaded', function() {
     const availableEmployeeIds = new Set();
+    const employeeShiftMap = new Map();
     let presenceLoaded = false;
+
+    function normalizeShift(shift) {
+        const normalized = String(shift || '').trim().toLowerCase();
+        if (normalized.includes('day')) return 'day';
+        if (normalized.includes('night')) return 'night';
+        return normalized;
+    }
 
     function updateEmployeeAvailability(empId, status) {
         if (!empId) return;
@@ -38,6 +46,7 @@ document.addEventListener('DOMContentLoaded', function() {
             .then(payload => {
                 const roster = Array.isArray(payload) ? payload : payload.data;
                 if (!Array.isArray(roster)) throw new Error('Invalid presence response');
+                availableEmployeeIds.clear();
                 roster.forEach(entry => updateEmployeeAvailability(entry.emp_id, entry.status));
                 presenceLoaded = true;
             })
@@ -49,6 +58,7 @@ document.addEventListener('DOMContentLoaded', function() {
         presenceBus.on('presence.changed', ({ emp_id, status }) => {
             updateEmployeeAvailability(emp_id, status);
         });
+        presenceBus.on('realtime:open', loadEmployeeAvailability);
     }
     loadEmployeeAvailability();
 
@@ -699,6 +709,7 @@ document.addEventListener('DOMContentLoaded', function() {
             employees.forEach(emp => {
                 const empId = emp.employee_id.toString();
                 employeeMap.set(empId, emp.name);
+                employeeShiftMap.set(empId, normalizeShift(emp.shift || emp.shift_time));
                 
                 let isTitleSearch = false;
                 if (Array.isArray(emp.project_names) && emp.project_names.some(p => p.toLowerCase().includes('title search'))) {
@@ -1445,11 +1456,13 @@ document.addEventListener('DOMContentLoaded', function() {
         if (cell.querySelector('.oa-inline-assign-wrap')) return;
 
         const currentEmployeeId = cell.dataset.employeeId || '';
+        const selectedShift = document.getElementById('allocationShiftFilter')?.value || '';
 
         // Build employee options from the cached map.
         const targetMap = titleSearchEmployeeMap.size > 0 ? titleSearchEmployeeMap : employeeMap;
         const options = Array.from(targetMap.entries())
-            .filter(([id]) => !presenceLoaded || availableEmployeeIds.has(id))
+            .filter(([id]) => presenceLoaded && availableEmployeeIds.has(id))
+            .filter(([id]) => !selectedShift || employeeShiftMap.get(id) === selectedShift)
             .sort((a, b) => a[1].localeCompare(b[1]))
             .map(([id, name]) =>
                 `<option value="${id}" ${id === currentEmployeeId ? 'selected' : ''}>${name} (${id})</option>`
@@ -2178,9 +2191,14 @@ document.addEventListener('DOMContentLoaded', function() {
         // Load employees for dropdown
         fetch('/api/v1/auth/employees/')
             .then(response => response.json())
-            .then(employees => {
+            .then(payload => {
+                const employees = Array.isArray(payload) ? payload : payload.data;
+                if (!Array.isArray(employees)) return;
+                const availableEmployees = employees.filter(emp =>
+                    presenceLoaded && availableEmployeeIds.has(String(emp.employee_id))
+                );
                 const employeeSelect = popup.querySelector('.oa-edit-employee');
-                employeeSelect.innerHTML = employees.map(emp => 
+                employeeSelect.innerHTML = availableEmployees.map(emp => 
                     `<option value="${emp.employee_id}" ${emp.employee_id === order.employee_id ? 'selected' : ''}>
                         ${emp.name}
                     </option>`
@@ -2188,7 +2206,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 
                 const qcSelect = popup.querySelector('.oa-edit-qc');
                 if (qcSelect) {
-                    qcSelect.innerHTML = `<option value="">Select QC</option>` + employees.map(emp => 
+                    qcSelect.innerHTML = `<option value="">Select QC</option>` + availableEmployees.map(emp => 
                         `<option value="${emp.employee_id}" ${emp.employee_id === order.qc_id ? 'selected' : ''}>
                             ${emp.name}
                         </option>`
