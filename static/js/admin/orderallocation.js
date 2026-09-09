@@ -17,6 +17,41 @@ let cancelReasonInput = null;
 let cancelForm = null;
 
 document.addEventListener('DOMContentLoaded', function() {
+    const availableEmployeeIds = new Set();
+    let presenceLoaded = false;
+
+    function updateEmployeeAvailability(empId, status) {
+        if (!empId) return;
+        if (status === 'offline') {
+            availableEmployeeIds.delete(empId);
+        } else {
+            availableEmployeeIds.add(empId);
+        }
+    }
+
+    function loadEmployeeAvailability() {
+        fetch('/api/v1/presence/', { credentials: 'same-origin' })
+            .then(response => {
+                if (!response.ok) throw new Error(`Presence request failed: ${response.status}`);
+                return response.json();
+            })
+            .then(payload => {
+                const roster = Array.isArray(payload) ? payload : payload.data;
+                if (!Array.isArray(roster)) throw new Error('Invalid presence response');
+                roster.forEach(entry => updateEmployeeAvailability(entry.emp_id, entry.status));
+                presenceLoaded = true;
+            })
+            .catch(error => console.warn('Employee availability unavailable:', error));
+    }
+
+    const presenceBus = window.__ops?.bus;
+    if (presenceBus) {
+        presenceBus.on('presence.changed', ({ emp_id, status }) => {
+            updateEmployeeAvailability(emp_id, status);
+        });
+    }
+    loadEmployeeAvailability();
+
     // Add toggle form functionality
     const toggleFormBtn = document.getElementById('toggleFormBtn');
     const formContainer = document.getElementById('orderAllocationFormContainer');
@@ -1414,6 +1449,7 @@ document.addEventListener('DOMContentLoaded', function() {
         // Build employee options from the cached map.
         const targetMap = titleSearchEmployeeMap.size > 0 ? titleSearchEmployeeMap : employeeMap;
         const options = Array.from(targetMap.entries())
+            .filter(([id]) => !presenceLoaded || availableEmployeeIds.has(id))
             .sort((a, b) => a[1].localeCompare(b[1]))
             .map(([id, name]) =>
                 `<option value="${id}" ${id === currentEmployeeId ? 'selected' : ''}>${name} (${id})</option>`
