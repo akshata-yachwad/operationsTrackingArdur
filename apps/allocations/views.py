@@ -262,13 +262,14 @@ class OrderRateViewSet(EnvelopeMixin, viewsets.ReadOnlyModelViewSet):
         # (order_type, state, county) tuple instead of order_type alone. The
         # same "Full Search" for two different counties would come back
         # twice. order_by() with no args drops the default ordering.
-        types = (
+        types = list(
             OrderRate.objects.exclude(order_type__isnull=True).exclude(order_type="")
             .order_by().values_list("order_type", flat=True).distinct()
         )
-        return self.ok(
-            sorted(types) or ["Current Owner", "Two Owner", "Full Search", "Update Search", "Document Retrieval"]
-        )
+        default_types = types or ["Current Owner", "Two Owner", "Full Search", "Update Search", "Document Retrieval"]
+        additional_types = ["PPS", "PPS-Update", "Exam Order", "Policy Forward", "Full Search", "Commitment and Update"]
+        
+        return self.ok(sorted(list(set(default_types + additional_types))))
 
     @action(detail=False, methods=["get"], url_path="states/(?P<order_type>[^/.]+)")
     def states(self, request, order_type=None):

@@ -119,6 +119,13 @@ $(document).ready(function() {
             
             if (shiftStatus === 'RUNNING') {
                 const currentCsrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] || 'true';
+                if (!sessionStorage.getItem('softwareShiftRunning')) {
+                    // Tab was reopened or new login without pagehide firing
+                    $.post('/api/v1/tracking/software-shifts/pause/', function() {
+                        syncStatusFromServer();
+                    });
+                    return;
+                }
                 sessionStorage.setItem('softwareShiftRunning', currentCsrf);
                 lastResumeTime = new Date(); // start counting difference from now
                 shiftTimerInterval = setInterval(updateShiftTimerDisplay, 1000);
@@ -138,7 +145,7 @@ $(document).ready(function() {
             } else if (shiftStatus === 'ENDED') {
                 sessionStorage.removeItem('softwareShiftRunning');
                 $('#btn-start-shift').hide();
-                $('#btn-resume-shift').hide();
+                $('#btn-resume-shift').show();
                 $('#btn-end-shift').hide();
                 if (data.total_time) {
                     $('#shift-timer').text(data.total_time);
@@ -160,15 +167,19 @@ $(document).ready(function() {
 
     window.startShift = function() {
         $.post('/api/v1/tracking/software-shifts/start-shift/', function(res) {
+            const currentCsrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] || 'true';
+            sessionStorage.setItem('softwareShiftRunning', currentCsrf);
             syncStatusFromServer();
             loadAttendance();
         }).fail(function(err) {
-            alert(err.responseJSON?.error || 'Failed to start shift');
+            alert(err.responseJSON?.error?.message || 'Failed to start shift');
         });
     };
 
     window.resumeShift = function() {
         $.post('/api/v1/tracking/software-shifts/resume/', function() {
+            const currentCsrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] || 'true';
+            sessionStorage.setItem('softwareShiftRunning', currentCsrf);
             syncStatusFromServer();
         });
     };

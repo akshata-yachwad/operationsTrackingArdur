@@ -36,6 +36,7 @@ class BaseMasterViewSet(EnvelopeMixin, viewsets.ModelViewSet):
     """
 
     permission_classes = [IsAdminOrReadOnly]
+    pagination_class = None
 
     def get_service(self):
         return MasterDataService.for_model(self.queryset.model)(actor=self.request.user)

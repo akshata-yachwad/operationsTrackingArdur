@@ -529,8 +529,11 @@ function fetchWorkData(date) {
                 return;
             }
 
+            let srNo = 0;
             data.forEach(row => {
+                srNo++;
                 const tr = document.createElement('tr');
+                tr.setAttribute('data-sr', srNo);
 
                 // Format times
                 const startTimeStr = row.start_time ? new Date(row.start_time).toLocaleTimeString('en-IN', { hour12: true }) : '';
@@ -560,6 +563,7 @@ function fetchWorkData(date) {
                 const totalTimeFormatted = row.total_time ? new Date(row.total_time * 1000).toISOString().substr(11, 8) : '00:00:00';
 
                 tr.innerHTML = `
+                    <td style="text-align:center; font-weight:600; color:#666;">${srNo}</td>
                     <td>${dateStr}</td>
                     <td>${row.project_name || row.project || ''}</td>
                     <td style="display:none;">${row.client_name || row.client_code || ''}</td>
@@ -578,7 +582,15 @@ function fetchWorkData(date) {
                 pageLength: 10,
                 lengthChange: false,
                 dom: '<"top">rt<"bottom"p><"clear">', // Custom DOM to hide default search
-                order: [[0, 'desc'], [6, 'desc']] // Sort by date and start time desc
+                order: [[1, 'desc'], [6, 'desc']], // Sort by DATE (col 1) and start time (col 6) desc
+                columnDefs: [
+                    { orderable: false, targets: 0 } // SR No. column not sortable
+                ],
+                rowCallback: function(row, data, displayIndex) {
+                    // Re-number SR No. based on current page position
+                    const pageInfo = this.api().page.info();
+                    $('td:first', row).text(pageInfo.start + displayIndex + 1);
+                }
             });
 
             // Connect existing global search

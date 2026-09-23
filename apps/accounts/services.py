@@ -81,6 +81,21 @@ class AuthService(BaseService):
         # nothing and the next request is anonymous.
         django_logout(request)
 
+        # Pause the timer, do not save final time
+        try:
+            from apps.tracking.models import SoftwareShift
+            from core.timezone import today_ist
+            shift = SoftwareShift.objects.filter(emp_id=emp_id, date=today_ist()).first()
+            if shift and not shift.is_ended and not shift.is_paused:
+                now = now_ist()
+                shift.accumulated_seconds += (now - shift.updated_at).total_seconds()
+                shift.is_paused = True
+                shift.pause_start = now
+                shift.updated_at = now
+                shift.save()
+        except Exception:
+            pass
+
         self.actor = user
         self.log("logout", emp_id=emp_id)
 

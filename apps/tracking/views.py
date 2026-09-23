@@ -502,21 +502,51 @@ class SoftwareShiftViewSet(viewsets.ViewSet):
     def start_shift(self, request):
         from core.timezone import today_ist, now_ist
         from apps.tracking.models import SoftwareShift, Attendance, AttendanceStatus
+        from django.db import IntegrityError, transaction
         now = now_ist()
-        
-        att, _ = Attendance.objects.get_or_create(emp_id=request.user.emp_id, date=today_ist())
+
+        # The legacy MySQL table ot_attendance had `is_paused` with no DB-level DEFAULT.
+        # The field is now declared on the model (default=False) so Django always
+        # supplies it on INSERT. Wrapping in atomic() guards against duplicate requests.
+        try:
+            with transaction.atomic():
+                att, _ = Attendance.objects.get_or_create(
+                    emp_id=request.user.emp_id,
+                    date=today_ist(),
+                )
+        except IntegrityError:
+            # Race: another request inserted the row between our SELECT and INSERT.
+            # Fall back to a plain GET; if it still doesn't exist, it's a real error.
+            try:
+                att = Attendance.objects.get(emp_id=request.user.emp_id, date=today_ist())
+            except Attendance.DoesNotExist:
+                raise
+
         if not att.first_login:
             att.first_login = now
             att.status = AttendanceStatus.PRESENT
             att.save()
-            
-        shift, created = SoftwareShift.objects.get_or_create(
-            emp_id=request.user.emp_id, date=today_ist(),
-            defaults={'start_time': now, 'updated_at': now, 'accumulated_seconds': 0}
-        )
+
+        # Two concurrent requests can both reach the INSERT inside get_or_create
+        # before either commits, causing the second to raise IntegrityError on the
+        # unique constraint (emp_id, date).  Catch that and fall back to a plain GET
+        # so the response is idempotent rather than a misleading 409.
+        try:
+            with transaction.atomic():
+                shift, created = SoftwareShift.objects.get_or_create(
+                    emp_id=request.user.emp_id, date=today_ist(),
+                    defaults={'start_time': now, 'updated_at': now, 'accumulated_seconds': 0},
+                )
+        except IntegrityError:
+            try:
+                shift = SoftwareShift.objects.get(emp_id=request.user.emp_id, date=today_ist())
+            except SoftwareShift.DoesNotExist:
+                raise
+            created = False
+
         if not created and shift.is_ended:
             return EnvelopeMixin().error('Shift already ended for today.')
-            
+
         return EnvelopeMixin().ok({'detail': 'Shift started.'})
 
     @action(detail=False, methods=['post'], url_path='pause')
@@ -542,11 +572,21 @@ class SoftwareShiftViewSet(viewsets.ViewSet):
         from apps.tracking.models import SoftwareShift
         shift = SoftwareShift.objects.filter(emp_id=request.user.emp_id, date=today_ist()).first()
         
-        if not shift or shift.is_ended or not shift.is_paused:
-            return EnvelopeMixin().ok({'detail': 'Already running or ended.'})
+        if not shift:
+            return EnvelopeMixin().ok({'detail': 'No shift found.'})
             
+        if not shift.is_paused and not shift.is_ended:
+            return EnvelopeMixin().ok({'detail': 'Already running.'})
+            
+        from apps.accounts.models import LoginHistory
+        latest_login = LoginHistory.objects.filter(emp_id=request.user.emp_id, date=today_ist()).order_by('-login_time').first()
+        if latest_login and latest_login.logout_time:
+            latest_login.logout_time = None
+            latest_login.save()
+
         now = now_ist()
         shift.is_paused = False
+        shift.is_ended = False
         shift.pause_start = None
         shift.updated_at = now
         shift.save()
@@ -581,6 +621,12 @@ class SoftwareShiftViewSet(viewsets.ViewSet):
         if att:
             att.last_logout = now
             att.save()
+            
+        from apps.accounts.models import LoginHistory
+        open_login = LoginHistory.objects.filter(emp_id=request.user.emp_id, logout_time__isnull=True).order_by('-login_time').first()
+        if open_login:
+            open_login.logout_time = now
+            open_login.save()
             
         return EnvelopeMixin().ok({'detail': 'Shift ended.'})
         
@@ -621,6 +667,17 @@ class SoftwareShiftViewSet(viewsets.ViewSet):
                 if not any(p in [auth.lower() for auth in authorized] for p in emp_projs):
                     continue
                     
+            final_time = shift.total_time
+            if not shift.is_ended:
+                from core.timezone import now_ist
+                total_sec = shift.accumulated_seconds
+                if not shift.is_paused and shift.updated_at:
+                    total_sec += (now_ist() - shift.updated_at).total_seconds()
+                hrs = int(total_sec // 3600)
+                mins = int((total_sec % 3600) // 60)
+                secs = int(total_sec % 60)
+                final_time = f"{hrs:02d}:{mins:02d}:{secs:02d}"
+
             data.append({
                 'id': f"softshift_{shift.id}",
                 'emp_id': shift.emp_id,
@@ -633,7 +690,7 @@ class SoftwareShiftViewSet(viewsets.ViewSet):
                 'start_time': "",
                 'end_time': "",
                 'date': shift.date.isoformat(),
-                'total_time': shift.total_time,
+                'total_time': final_time,
                 'work_location': "",
                 'is_paused': False,
                 'type': 'software_shift',
