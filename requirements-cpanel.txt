@@ -1,0 +1,64 @@
+# OpsTracking — dependencies for GoDaddy cPanel (CloudLinux + Passenger).
+#
+# Install this INSTEAD of requirements.txt on cPanel:
+#     pip install -r requirements-cpanel.txt
+#
+# Differences from requirements.txt, and why:
+#
+#   PyMySQL replaces psycopg   — production is the legacy MySQL schema, and
+#                                mysqlclient is a C extension that usually
+#                                fails to build under the Python selector.
+#                                settings/cpanel.py installs PyMySQL under the
+#                                MySQLdb name.
+#   no channels-redis / redis  — there is no Redis on shared hosting;
+#                                settings/cpanel.py uses the InMemory layer and
+#                                the database cache instead.
+#   no gunicorn                — Passenger is the server here.
+#   channels WITHOUT [daphne]  — the daphne extra pulls twisted, autobahn,
+#                                pyOpenSSL and cryptography. cryptography has
+#                                no wheel for this platform and compiles from
+#                                Rust source, which is what makes a cPanel
+#                                install crawl or time out. Passenger serves no
+#                                WebSockets, so none of it is ever used.
+#                                settings/cpanel.py drops "daphne" from
+#                                INSTALLED_APPS to match.
+#
+# plain `channels` stays: it is in INSTALLED_APPS and imported by apps/realtime,
+# so removing it breaks startup even with WebSockets off. On its own it needs
+# only asgiref and Django.
+
+# --- core ---
+Django==5.2.*
+djangorestframework==3.16.*
+django-environ==0.12.*
+
+# --- database ---
+PyMySQL==1.1.*
+
+# --- realtime (imported at startup; transport is inactive under Passenger) ---
+channels==4.2.*
+
+# --- background jobs (eager mode — no worker process) ---
+celery==5.5.*
+django-celery-beat==2.8.*
+django-celery-results==2.6.*
+
+# --- auth / security ---
+bcrypt==4.2.*
+django-cors-headers==4.6.*
+
+# --- files / media ---
+Pillow==11.*
+python-magic==0.4.*        # needs system libmagic; uploads are blocked without it
+
+# --- templating ---
+Jinja2==3.1.*
+
+# --- reports ---
+openpyxl==3.1.*
+
+# --- serving ---
+whitenoise==6.8.*
+
+# --- ops (optional; only active when SENTRY_DSN is set) ---
+sentry-sdk==2.*
