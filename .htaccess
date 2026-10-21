@@ -1,0 +1,6 @@
+# DO NOT REMOVE. CLOUDLINUX PASSENGER CONFIGURATION BEGIN
+PassengerAppRoot "/home/n20m30upmqr6/subdomain/opstracking.ardurtechnology.com"
+PassengerBaseURI "/"
+PassengerPython "/home/n20m30upmqr6/virtualenv/subdomain/opstracking.ardurtechnology.com/3.11/bin/python"
+PassengerAppLogFile "/home/n20m30upmqr6/logs/opstracking"
+# DO NOT REMOVE. CLOUDLINUX PASSENGER CONFIGURATION END

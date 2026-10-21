@@ -23,7 +23,7 @@ class AllocationViewSet(ServiceMixin, EnvelopeMixin, viewsets.ModelViewSet):
     """/api/v1/allocations/
 
     Employees see and progress their own work. Creating, reassigning and
-    cancelling are supervisor actions.
+    cancelling are team-leader (or above) actions.
     """
 
     serializer_class = AllocationSerializer
@@ -79,7 +79,7 @@ class AllocationViewSet(ServiceMixin, EnvelopeMixin, viewsets.ModelViewSet):
         serializer.instance = self.service.create(data)
 
     def perform_destroy(self, instance):
-        self.service.cancel(instance, reason="Cancelled by supervisor")
+        self.service.cancel(instance, reason="Cancelled by manager")
 
     @action(detail=True, methods=["post"], url_path="status")
     def set_status(self, request, allocation_id=None):
@@ -222,7 +222,7 @@ class AllocationViewSet(ServiceMixin, EnvelopeMixin, viewsets.ModelViewSet):
         return self.ok(list(summary_data))
 
 class OrderHistoryViewSet(EnvelopeMixin, viewsets.ReadOnlyModelViewSet):
-    """/api/v1/allocations/history/ — the audit trail, supervisors only."""
+    """/api/v1/allocations/history/ — the audit trail, project admins only."""
 
     serializer_class = OrderHistorySerializer
     permission_classes = [IsAdminOrSupervisor]
@@ -262,14 +262,13 @@ class OrderRateViewSet(EnvelopeMixin, viewsets.ReadOnlyModelViewSet):
         # (order_type, state, county) tuple instead of order_type alone. The
         # same "Full Search" for two different counties would come back
         # twice. order_by() with no args drops the default ordering.
-        types = list(
+        types = (
             OrderRate.objects.exclude(order_type__isnull=True).exclude(order_type="")
             .order_by().values_list("order_type", flat=True).distinct()
         )
-        default_types = types or ["Current Owner", "Two Owner", "Full Search", "Update Search", "Document Retrieval"]
-        additional_types = ["PPS", "PPS-Update", "Exam Order", "Policy Forward", "Full Search", "Commitment and Update"]
-        
-        return self.ok(sorted(list(set(default_types + additional_types))))
+        return self.ok(
+            sorted(types) or ["Current Owner", "Two Owner", "Full Search", "Update Search", "Document Retrieval"]
+        )
 
     @action(detail=False, methods=["get"], url_path="states/(?P<order_type>[^/.]+)")
     def states(self, request, order_type=None):

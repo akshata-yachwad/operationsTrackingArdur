@@ -1,7 +1,7 @@
 """Allocation business rules.
 
-Creating and reassigning allocations is a supervisor action — that is the fix
-for "an employee can create allocations for themselves".
+Creating and reassigning allocations is a team-leader (or above) action — that
+is the fix for "an employee can create allocations for themselves".
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ class AllocationService(BaseService):
 
     @transaction.atomic
     def create(self, data: dict) -> BatchAllocation:
-        self.require_supervisor("Only a supervisor can allocate work.")
+        self.require_team_lead("Only a team leader or above can allocate work.")
 
         allocation_id = data.get("allocation_id")
         if not allocation_id:
@@ -57,7 +57,7 @@ class AllocationService(BaseService):
     @transaction.atomic
     def reassign(self, allocation: BatchAllocation, new_employee_id: str,
                  employee_name: str = "") -> BatchAllocation:
-        self.require_supervisor("Only a supervisor can reassign work.")
+        self.require_team_lead("Only a team leader or above can reassign work.")
 
         if allocation.status == AllocationStatus.COMPLETED:
             raise ConflictError("A completed allocation cannot be reassigned.")
@@ -86,16 +86,16 @@ class AllocationService(BaseService):
             "No such allocation.",
         )
 
-        if not (self.actor and (self.actor.is_supervisor or self.actor_emp_id in (allocation.employee_id, allocation.qc_id))):
+        if not (self.actor and (self.actor.is_team_lead or self.actor_emp_id in (allocation.employee_id, allocation.qc_id))):
             raise ConflictError("That allocation is assigned to someone else.")
 
         if status not in AllocationStatus.values:
             raise ValidationError(f"'{status}' is not a valid status.")
 
         if allocation.status == AllocationStatus.COMPLETED and not (
-            self.actor and self.actor.is_supervisor
+            self.actor and self.actor.is_team_lead
         ):
-            raise ConflictError("A completed allocation can only be reopened by a supervisor.")
+            raise ConflictError("A completed allocation can only be reopened by a team leader or above.")
 
         previous = allocation.status
         allocation.status = status
@@ -184,7 +184,7 @@ class AllocationService(BaseService):
 
     @transaction.atomic
     def cancel(self, allocation: BatchAllocation, reason: str = "") -> BatchAllocation:
-        self.require_supervisor("Only a supervisor can cancel an allocation.")
+        self.require_team_lead("Only a team leader or above can cancel an allocation.")
 
         if allocation.status == AllocationStatus.COMPLETED:
             raise ConflictError("A completed allocation cannot be cancelled.")

@@ -266,4 +266,4 @@ class ChatPage(BasePage):
 
 
 def _home_for(user) -> str:
-    return reverse("pages:dashboard") if user.is_supervisor else reverse("pages:userdashboard")
+    return reverse("pages:dashboard") if user.is_team_lead else reverse("pages:userdashboard")

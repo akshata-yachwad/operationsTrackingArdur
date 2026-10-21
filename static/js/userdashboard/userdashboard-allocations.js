@@ -46,7 +46,7 @@ function statusBadge(status) {
 
 // ── render ────────────────────────────────────────────────────────────────────
 
-function renderRow(alloc, hasActiveTask = false, srNo = 1) {
+function renderRow(alloc, hasActiveTask = false) {
   const currentEmpId = document.getElementById("user-name")?.dataset?.employeeId;
   const isAssignedEmployee = alloc.employee_id === currentEmpId;
   const isAssignedQC = alloc.qc_id === currentEmpId;
@@ -70,7 +70,6 @@ function renderRow(alloc, hasActiveTask = false, srNo = 1) {
   if (alloc.is_overdue) tr.classList.add("alloc-row-overdue");
 
   tr.innerHTML = `
-    <td style="text-align:center; font-weight:600; color:#666;">${srNo}</td>
     <td style="display:none;">${alloc.client_code || "-"}</td>
     <td>${alloc.work_type || "-"}</td>
     <td>${alloc.order_id || "-"}</td>
@@ -366,7 +365,7 @@ async function loadAllocatedOrders() {
 
     tbody.innerHTML = "";
     const hasActiveTask = items.some(a => a.status === "search_in_progress" || a.status === "qc_in_progress");
-    items.forEach((alloc, idx) => tbody.appendChild(renderRow(alloc, hasActiveTask, idx + 1)));
+    items.forEach((alloc) => tbody.appendChild(renderRow(alloc, hasActiveTask)));
 
     if (empty) empty.hidden = items.length > 0;
     if (badge) {

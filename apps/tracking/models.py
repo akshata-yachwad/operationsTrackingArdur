@@ -237,14 +237,6 @@ class Attendance(models.Model):
     )
     first_login = models.DateTimeField(null=True, blank=True)
     last_logout = models.DateTimeField(null=True, blank=True)
-    # ── Legacy MySQL columns that exist in ot_attendance but were missing from
-    # the Django model.  All NOT NULL columns must carry a Python-level default
-    # so Django always includes them in INSERT statements (MySQL STRICT mode
-    # rejects rows that omit a NOT NULL column with no DB-level DEFAULT).
-    is_paused = models.BooleanField(default=False)
-    paused_at = models.DateTimeField(null=True, blank=True)
-    accumulated_work_seconds = models.FloatField(default=0.0)
-    last_resume_time = models.DateTimeField(null=True, blank=True)
     total_break_time = models.FloatField(default=0.0, help_text="Total break seconds")
 
     created_at = models.DateTimeField(default=now_ist)
