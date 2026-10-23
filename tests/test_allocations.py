@@ -96,6 +96,46 @@ def test_all_four_detail_actions_use_the_lookup_field_kwarg():
         )
 
 
+def test_indexing_report_applies_inclusive_date_range(as_employee, employee):
+    from datetime import timedelta
+
+    from apps.accounts.models import Employee
+    from apps.allocations.models import TitleIndexingSession
+    from core.timezone import day_bounds, today_ist
+
+    date_from = today_ist() - timedelta(days=1)
+    date_to = today_ist()
+    Employee.objects.filter(employee_id=employee.emp_id).update(department="Ops")
+    start, _ = day_bounds(date_from)
+    _, end = day_bounds(date_to)
+    included_start = TitleIndexingSession.objects.create(
+        employee_id=employee.emp_id, client_code="C1", work_type="INDEXING",
+        started_at=start,
+    )
+    included_end = TitleIndexingSession.objects.create(
+        employee_id=employee.emp_id, client_code="C1", work_type="INDEXING",
+        started_at=end - timedelta(microseconds=1),
+    )
+    TitleIndexingSession.objects.create(
+        employee_id=employee.emp_id, client_code="C1", work_type="INDEXING",
+        started_at=start - timedelta(microseconds=1),
+    )
+    TitleIndexingSession.objects.create(
+        employee_id=employee.emp_id, client_code="C1", work_type="INDEXING",
+        started_at=end,
+    )
+
+    response = as_employee.get(
+        "/api/v1/allocations/indexing/",
+        {"from": date_from.isoformat(), "to": date_to.isoformat()},
+    )
+
+    assert response.status_code == 200
+    rows = response.data["data"]
+    assert {row["id"] for row in rows} == {included_start.id, included_end.id}
+    assert all(row["work_location"] == "Ops" for row in rows)
+
+
 # ── the underlying business rules, over HTTP ─────────────────────────
 
 def test_employee_can_progress_their_own_allocation(as_employee, allocation):

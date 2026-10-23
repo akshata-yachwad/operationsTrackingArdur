@@ -124,7 +124,7 @@ class EmployeeViewSet(ServiceMixin, EnvelopeMixin, viewsets.ModelViewSet):
     pagination_class = None
 
     def get_permissions(self):
-        if self.action in ("list", "retrieve"):
+        if self.action in ("list", "retrieve", "locations"):
             return [IsAuthenticatedEmployee()]
         return [IsAdminOrSupervisor()]
 
@@ -156,6 +156,19 @@ class EmployeeViewSet(ServiceMixin, EnvelopeMixin, viewsets.ModelViewSet):
         if project := self.request.query_params.get("project"):
             queryset = queryset.filter(project__icontains=project)
         return queryset
+
+    @action(detail=False, methods=["get"])
+    def locations(self, request):
+        """Return the work locations visible in the employee roster."""
+        locations = (
+            self.get_queryset()
+            .exclude(department__isnull=True)
+            .exclude(department="")
+            .order_by()
+            .values_list("department", flat=True)
+            .distinct()
+        )
+        return self.ok(sorted({location.strip() for location in locations if location.strip()}))
 
 
 

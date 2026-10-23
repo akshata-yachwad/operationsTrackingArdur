@@ -75,7 +75,8 @@ $(document).ready(function () {
 
     // Function to fetch summary data using existing route
     function fetchSummaryData() {
-        const today = new Date().toISOString().split('T')[0];
+        const now = new Date();
+            const today = new Date().toISOString().split('T')[0];
         const csrfToken = (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || '';
         const summaryGrid = $('.summary-grid');
         summaryGrid.html('<div class="loading" style="text-align:center; padding: 40px; font-size:16px; color:#6b7280;"><i class="fas fa-spinner fa-spin"></i> Loading projects summary...</div>');
@@ -854,7 +855,12 @@ $(document).ready(function () {
     }
 
     // Set default date to today
-    const today = new Date().toISOString().split('T')[0];
+    const reportDate = new Date();
+    const today = [
+        reportDate.getFullYear(),
+        String(reportDate.getMonth() + 1).padStart(2, '0'),
+        String(reportDate.getDate()).padStart(2, '0')
+    ].join('-');
     $('#startDate').val(today);
     $('#endDate').val(today);
 
@@ -1016,9 +1022,15 @@ $(document).ready(function () {
 
     // Work Location filter change event
     $('#workLocationFilter').on('change', function () {
-        const selectedWorkLocation = $(this).val();
-        table.column(12).search(selectedWorkLocation).draw(); // Assuming work_location is the 13th column
+        applyWorkLocationFilter($(this).val());
     });
+
+    function applyWorkLocationFilter(location) {
+        const searchValue = location
+            ? `^${$.fn.dataTable.util.escapeRegex(location)}$`
+            : '';
+        table.column(12).search(searchValue, true, false).draw();
+    }
 
     // Search field keyup event
     $('#searchField').on('keyup', function () {
@@ -1054,18 +1066,22 @@ $(document).ready(function () {
             fetch(`/api/v1/tracking/sessions/?from=${startDate}&to=${endDate}`, {
                 headers: { 'X-CSRFToken': (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || '' }
             }).then(res => res.json()),
-            fetch(`/api/v1/allocations/indexing/`, { // We don't have date filters on indexing API yet, fetching all for now or the API ignores it.
+            fetch(`/api/v1/allocations/indexing/?from=${startDate}&to=${endDate}`, {
                 headers: { 'X-CSRFToken': (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || '' }
             }).then(res => res.json()),
             fetch(`/api/v1/tracking/software-shifts/?from=${startDate}&to=${endDate}`, {
                 headers: { 'X-CSRFToken': (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || '' }
             }).then(res => res.json()),
-            fetch('/api/v1/masters/projects/?active=true', { credentials: 'same-origin' }).then(r => r.json())
-        ]).then(([trackingRes, indexingRes, softwareShiftRes, projRes]) => {
+            fetch('/api/v1/masters/projects/?active=true', { credentials: 'same-origin' }).then(r => r.json()),
+            fetch('/api/v1/auth/employees/locations/', { credentials: 'same-origin' }).then(r => r.json())
+        ]).then(([trackingRes, indexingRes, softwareShiftRes, projRes, locationsRes]) => {
             const rows1 = trackingRes.data || trackingRes;
             const rows2 = indexingRes.data || indexingRes;
             const rows3 = softwareShiftRes.data || softwareShiftRes;
             const rawProjects = Array.isArray(projRes) ? projRes : (projRes.results || projRes.data || []);
+            const availableLocations = Array.isArray(locationsRes)
+                ? locationsRes
+                : (locationsRes.data || locationsRes.results || []);
 
             const formattedRows2 = Array.isArray(rows2) ? rows2.map(item => {
                 return {
@@ -1081,7 +1097,7 @@ $(document).ready(function () {
                     end_time: item.completed_at || null,
                     date: item.started_at ? item.started_at.split('T')[0] : "",
                     total_time: item.time_taken || 0,
-                    work_location: "-",
+                    work_location: item.work_location || "",
                     is_paused: false,
                     type: 'indexing'
                 };
@@ -1136,13 +1152,15 @@ $(document).ready(function () {
             }
 
             // Populate work location dropdown
-            const workLocations = [...new Set(rows.map(item => item.work_location || item.client_code).filter(Boolean))];
             const workLocationFilter = $('#workLocationFilter');
+            const currentLocation = workLocationFilter.val();
             workLocationFilter.empty();
-            workLocationFilter.append('<option value="">All Work Locations</option>');
-            workLocations.forEach(location => {
-                workLocationFilter.append(`<option value="${location}">${location}</option>`);
+            workLocationFilter.append($('<option>', { value: '', text: 'All Work Locations' }));
+            availableLocations.forEach(location => {
+                workLocationFilter.append($('<option>', { value: location, text: location }));
             });
+            workLocationFilter.val(availableLocations.includes(currentLocation) ? currentLocation : '');
+            applyWorkLocationFilter(workLocationFilter.val());
         }).catch(error => {
             console.error("Error fetching data:", error);
             alert("An error occurred while fetching data. Please try again.");

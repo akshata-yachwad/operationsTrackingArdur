@@ -17,6 +17,7 @@ from apps.allocations.serializers import (
 from apps.allocations.services import AllocationService
 from core.mixins import EnvelopeMixin, ServiceMixin
 from core.permissions import IsAdminOrSupervisor, IsAuthenticatedEmployee, IsManager
+from core.timezone import day_bounds, now_ist
 
 
 class AllocationViewSet(ServiceMixin, EnvelopeMixin, viewsets.ModelViewSet):
@@ -293,7 +294,6 @@ from apps.allocations.models import TitleIndexingSession
 from apps.allocations.serializers import TitleIndexingSessionSerializer
 from rest_framework.decorators import action
 from datetime import datetime
-from core.timezone import now_ist
 from core.mixins import EnvelopeMixin
 from rest_framework import viewsets, status
 from rest_framework.response import Response
@@ -306,9 +306,15 @@ class TitleIndexingSessionViewSet(EnvelopeMixin, viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
-        if self.request.user.is_team_lead:
-            return qs
-        return qs.filter(employee_id=self.request.user.emp_id)
+        if not self.request.user.is_team_lead:
+            qs = qs.filter(employee_id=self.request.user.emp_id)
+        if date_from := self.request.query_params.get("from"):
+            start, _ = day_bounds(datetime.strptime(date_from, "%Y-%m-%d").date())
+            qs = qs.filter(started_at__gte=start)
+        if date_to := self.request.query_params.get("to"):
+            _, end = day_bounds(datetime.strptime(date_to, "%Y-%m-%d").date())
+            qs = qs.filter(started_at__lt=end)
+        return qs
 
     @action(detail=False, methods=["post"], url_path="start")
     def start_session(self, request):

@@ -12,10 +12,10 @@ from datetime import timedelta
 
 import pytest
 
-from apps.tracking.models import SessionState, Target, WorkSession
+from apps.tracking.models import SessionState, SoftwareShift, Target, WorkSession
 from apps.tracking.services import TargetService, WorkSessionService
 from core.exceptions import ConflictError, NotFoundError, PermissionDeniedError, ValidationError
-from core.timezone import now_ist, today_ist
+from core.timezone import now_ist, start_of_day, today_ist
 
 pytestmark = pytest.mark.django_db
 
@@ -235,6 +235,79 @@ def test_date_range_filter(as_employee, employee, masters):
 
     assert recent.id in ids
     assert old.id not in ids
+
+
+def test_session_date_range_includes_both_selected_days(as_employee, employee, masters):
+    first_day = today_ist() - timedelta(days=2)
+    last_day = today_ist() - timedelta(days=1)
+    included_start = WorkSession.objects.create(
+        emp_id=employee.emp_id, project="Test Project",
+        start_time=start_of_day(first_day),
+    )
+    included_end = WorkSession.objects.create(
+        emp_id=employee.emp_id, project="Test Project",
+        start_time=start_of_day(last_day),
+    )
+    excluded_before = WorkSession.objects.create(
+        emp_id=employee.emp_id, project="Test Project",
+        start_time=start_of_day(first_day) - timedelta(microseconds=1),
+    )
+    excluded_after = WorkSession.objects.create(
+        emp_id=employee.emp_id, project="Test Project",
+        start_time=start_of_day(last_day + timedelta(days=1)),
+    )
+
+    response = as_employee.get(
+        "/api/v1/tracking/sessions/",
+        {"from": first_day.isoformat(), "to": last_day.isoformat()},
+    )
+
+    assert response.status_code == 200
+    rows = response.data["data"]
+    assert {row["id"] for row in rows} == {included_start.id, included_end.id}
+    assert excluded_before.id not in {row["id"] for row in rows}
+    assert excluded_after.id not in {row["id"] for row in rows}
+
+
+def test_software_shift_date_range_includes_both_selected_days(api, employee):
+    from apps.accounts.models import Employee, Role, User
+    from tests.conftest import PASSWORD
+
+    first_day = today_ist() - timedelta(days=2)
+    last_day = today_ist() - timedelta(days=1)
+    included_start = SoftwareShift.objects.create(
+        emp_id=employee.emp_id, date=first_day, start_time=start_of_day(first_day),
+    )
+    included_end = SoftwareShift.objects.create(
+        emp_id=employee.emp_id, date=last_day, start_time=start_of_day(last_day),
+    )
+    SoftwareShift.objects.create(
+        emp_id=employee.emp_id, date=first_day - timedelta(days=1),
+        start_time=start_of_day(first_day - timedelta(days=1)),
+    )
+    SoftwareShift.objects.create(
+        emp_id=employee.emp_id, date=last_day + timedelta(days=1),
+        start_time=start_of_day(last_day + timedelta(days=1)),
+    )
+    admin_employee = Employee.objects.create(
+        employee_id="REPORT-SUPER", name="Report Super Admin", role=Role.SUPER_ADMIN,
+    )
+    admin = User.objects.create_user(
+        emp_id=admin_employee.employee_id, name=admin_employee.name, password=PASSWORD,
+    )
+    api.force_authenticate(user=admin)
+
+    response = api.get(
+        "/api/v1/tracking/software-shifts/",
+        {"from": first_day.isoformat(), "to": last_day.isoformat()},
+    )
+
+    assert response.status_code == 200
+    rows = response.data["data"]
+    assert {row["id"] for row in rows} == {
+        f"softshift_{included_start.id}",
+        f"softshift_{included_end.id}",
+    }
 
 
 # ── the read serializer's derived fields ─────────────────────

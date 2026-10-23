@@ -634,7 +634,7 @@ class SoftwareShiftViewSet(viewsets.ViewSet):
                 'end_time': "",
                 'date': shift.date.isoformat(),
                 'total_time': shift.total_time,
-                'work_location': "",
+                'work_location': emp.department,
                 'is_paused': False,
                 'type': 'software_shift',
                 'status': 'Present'

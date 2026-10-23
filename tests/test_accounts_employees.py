@@ -254,6 +254,22 @@ def test_list_employees_over_http(as_employee, employee):
     assert response.status_code == 200
 
 
+def test_employee_locations_endpoint_returns_distinct_locations(as_admin, employee, other_employee):
+    employee.employee.department = "Ops"
+    employee.employee.save(update_fields=["department"])
+    other_employee.employee.department = " Remote "
+    other_employee.employee.save(update_fields=["department"])
+    Employee.objects.create(
+        employee_id="EMP003", name="Third Employee", project="Test Project",
+        department="Ops",
+    )
+
+    response = as_admin.get("/api/v1/auth/employees/locations/")
+
+    assert response.status_code == 200
+    assert response.data["data"] == ["Ops", "Remote"]
+
+
 def test_create_employee_over_http_requires_a_supervisor(as_employee):
     response = as_employee.post(
         "/api/v1/auth/employees/", {"employee_id": "E913", "name": "New"}

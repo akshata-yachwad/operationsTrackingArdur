@@ -188,16 +188,30 @@ class OrderRateSerializer(serializers.ModelSerializer):
 
 class TitleIndexingSessionSerializer(serializers.ModelSerializer):
     employee_name = serializers.SerializerMethodField()
+    work_location = serializers.SerializerMethodField()
 
     class Meta:
         model = TitleIndexingSession
         fields = [
             "id", "employee_id", "employee_name", "project", "client_code", "work_type",
             "started_at", "completed_at", "time_taken",
-            "work_units_completed", "status"
+            "work_units_completed", "status", "work_location",
         ]
 
+    def _employee(self, obj):
+        cache = getattr(self, "_employee_cache", None)
+        if cache is None:
+            cache = self._employee_cache = {}
+        if obj.employee_id not in cache:
+            from apps.accounts.models import Employee
+
+            cache[obj.employee_id] = Employee.objects.filter(employee_id=obj.employee_id).first()
+        return cache[obj.employee_id]
+
     def get_employee_name(self, obj):
-        from apps.accounts.models import Employee
-        emp = Employee.objects.filter(employee_id=obj.employee_id).first()
+        emp = self._employee(obj)
         return emp.name if emp else obj.employee_id
+
+    def get_work_location(self, obj):
+        emp = self._employee(obj)
+        return emp.department if emp else ""
