@@ -1,0 +1,42 @@
+OpsTracking production deployment ZIP manifest
+Archive: OpsTracking_Production_Deploy.zip
+Archive root: Django application root (same directory as manage.py)
+
+Each archive entry is a path relative to that application root. The ZIP has no
+extra parent directory.
+
+Included runtime files:
+1. apps/accounts/views.py
+   Destination: <application-root>/apps/accounts/views.py
+2. apps/allocations/serializers.py
+   Destination: <application-root>/apps/allocations/serializers.py
+3. apps/allocations/views.py
+   Destination: <application-root>/apps/allocations/views.py
+4. apps/reports/selectors.py
+   Destination: <application-root>/apps/reports/selectors.py
+5. apps/tracking/views.py
+   Destination: <application-root>/apps/tracking/views.py
+6. core/serializers.py
+   Destination: <application-root>/core/serializers.py
+7. static/js/admin/reports.js
+   Destination: <application-root>/static/js/admin/reports.js
+8. templates/components/tabs_reports.html
+   Destination: <application-root>/templates/components/tabs_reports.html
+9. templates/dashboard.html
+   Destination: <application-root>/templates/dashboard.html
+
+The JavaScript source is deployed as-is; no separate frontend compilation step
+is configured in this repository. Run Django collectstatic after extracting
+the files, using the confirmed cPanel application virtual environment.
+
+Not included:
+- Tests, test fixtures, or test configuration
+- Migrations
+- .env files, credentials, or secrets
+- requirements/dependency files
+- passenger_wsgi.py, .htaccess, or settings files
+- Generated staticfiles output
+- Git metadata, virtual environments, caches, logs, databases, or media
+
+This manifest describes package contents only. It does not certify compatibility
+with the live GoDaddy application, interpreter, settings, or deployed revision.

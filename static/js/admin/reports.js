@@ -47,9 +47,7 @@ $(document).ready(function () {
         // Refresh reports data
         const startDate = $('#startDate').val();
         const endDate = $('#endDate').val();
-        if (startDate && endDate) {
-            fetchData(startDate, endDate);
-        }
+        fetchData(startDate, endDate);
     });
 
     $('.graphs-btn').click(function () {
@@ -863,6 +861,7 @@ $(document).ready(function () {
     ].join('-');
     $('#startDate').val(today);
     $('#endDate').val(today);
+    $('#startDate, #endDate').data('previousValue', today);
 
     // Fetch data for today on page load
     fetchData(today, today);
@@ -871,14 +870,14 @@ $(document).ready(function () {
     $('#startDate, #endDate').on('change', function () {
         const startDate = $('#startDate').val();
         const endDate = $('#endDate').val();
-        if (startDate && endDate) {
-            if (startDate > endDate) {
-                alert('End date cannot be before start date');
-                $(this).val(today);
-                return;
-            }
-            fetchData(startDate, endDate);
+        if (startDate && endDate && startDate > endDate) {
+            alert('End date cannot be before start date');
+            $(this).val($(this).data('previousValue'));
+            return;
         }
+        $('#startDate').data('previousValue', startDate);
+        $('#endDate').data('previousValue', endDate);
+        fetchData(startDate, endDate);
     });
 
     // Modified download button click handler
@@ -936,9 +935,7 @@ $(document).ready(function () {
         const startDate = $('#startDate').val();
         const endDate = $('#endDate').val();
         const dateRangeStr = startDate === endDate ? startDate : `${startDate}_to_${endDate}`;
-        const empId = $('#employeeIdFilter').val().trim().replace(/[^a-zA-Z0-9_-]/g, '');
-        const employeeSuffix = empId ? `_emp_${empId}` : '';
-        return `employee_work_data_${dateRangeStr}${employeeSuffix}.${extension}`;
+        return `employee_work_data_${dateRangeStr}.${extension}`;
     }
 
     function downloadCSV(rows, columns) {
@@ -992,7 +989,6 @@ $(document).ready(function () {
         const reportTitle = 'Employee Work Report';
         const startDate = $('#startDate').val();
         const endDate = $('#endDate').val();
-        const employeeId = $('#employeeIdFilter').val().trim();
 
         function drawPageHeading() {
             pdf.setFont('helvetica', 'bold');
@@ -1000,7 +996,7 @@ $(document).ready(function () {
             pdf.text(reportTitle, margin, margin + 2);
             pdf.setFont('helvetica', 'normal');
             pdf.setFontSize(8);
-            pdf.text(`Date range: ${startDate} to ${endDate}${employeeId ? ` | Employee ID: ${employeeId}` : ''}`, margin, margin + 18);
+            pdf.text(`Date range: ${startDate} to ${endDate}`, margin, margin + 18);
             pdf.text(`Rows: ${rows.length}`, pageWidth - margin, margin + 18, { align: 'right' });
         }
 
@@ -1066,9 +1062,7 @@ $(document).ready(function () {
     $('#refreshButton').on('click', function () {
         const startDate = $('#startDate').val();
         const endDate = $('#endDate').val();
-        if (startDate && endDate) {
-            fetchData(startDate, endDate);
-        }
+        fetchData(startDate, endDate);
     });
 
     // Project filter change event
@@ -1115,19 +1109,8 @@ $(document).ready(function () {
         table.column(12).search(searchValue, true, false).draw();
     }
 
-    $('#employeeIdFilter').on('input', function () {
-        applyEmployeeIdFilter($(this).val());
-    });
-
-    function applyEmployeeIdFilter(employeeId) {
-        const searchValue = employeeId.trim()
-            ? $.fn.dataTable.util.escapeRegex(employeeId.trim())
-            : '';
-        table.column(1).search(searchValue, true, false).draw();
-    }
-
     // Search field keyup event
-    $('#searchField').on('keyup', function () {
+    $('#searchField').on('input', function () {
         const searchValue = $(this).val();
         table.search(searchValue).draw(); // Filter the table based on the search input
 
@@ -1150,32 +1133,29 @@ $(document).ready(function () {
     setInterval(function () {
         const startDate = $('#startDate').val();
         const endDate = $('#endDate').val();
-        if (startDate && endDate) {
+        if (startDate || endDate) {
             fetchData(startDate, endDate);
         }
     }, 300000); // 5 minutes
 
     function fetchData(startDate, endDate) {
         Promise.all([
-            fetch(`/api/v1/tracking/sessions/?from=${startDate}&to=${endDate}`, {
-                headers: { 'X-CSRFToken': (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || '' }
-            }).then(res => res.json()),
-            fetch(`/api/v1/allocations/indexing/?from=${startDate}&to=${endDate}`, {
-                headers: { 'X-CSRFToken': (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || '' }
-            }).then(res => res.json()),
-            fetch(`/api/v1/tracking/software-shifts/?from=${startDate}&to=${endDate}`, {
-                headers: { 'X-CSRFToken': (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || '' }
-            }).then(res => res.json()),
-            fetch('/api/v1/masters/projects/?active=true', { credentials: 'same-origin' }).then(r => r.json()),
-            fetch('/api/v1/auth/employees/locations/', { credentials: 'same-origin' }).then(r => r.json())
-        ]).then(([trackingRes, indexingRes, softwareShiftRes, projRes, locationsRes]) => {
-            const rows1 = trackingRes.data || trackingRes;
-            const rows2 = indexingRes.data || indexingRes;
-            const rows3 = softwareShiftRes.data || softwareShiftRes;
+            fetchReportRows(`/api/v1/tracking/sessions/?from=${startDate}&to=${endDate}`),
+            fetchReportRows(`/api/v1/allocations/indexing/?from=${startDate}&to=${endDate}`),
+            fetchReportRows(`/api/v1/tracking/software-shifts/?from=${startDate}&to=${endDate}`),
+            fetchReportJson('/api/v1/masters/projects/?active=true'),
+            fetchReportJson('/api/v1/auth/employees/locations/')
+        ]).then(([rows1, rows2, rows3, projRes, locationsRes]) => {
             const rawProjects = Array.isArray(projRes) ? projRes : (projRes.results || projRes.data || []);
             const availableLocations = Array.isArray(locationsRes)
                 ? locationsRes
                 : (locationsRes.data || locationsRes.results || []);
+            const uniqueLocations = [...new Set(
+                availableLocations
+                    .filter(location => typeof location === 'string')
+                    .map(location => location.trim())
+                    .filter(Boolean)
+            )];
 
             const formattedRows2 = Array.isArray(rows2) ? rows2.map(item => {
                 return {
@@ -1231,35 +1211,75 @@ $(document).ready(function () {
             const projectFilter = $('#projectFilter');
             const currentSelection = projectFilter.val();
             projectFilter.empty();
+            projectFilter.append($('<option>', { value: '', text: 'All Projects' }));
             if (projects.length === 0) {
-                projectFilter.append('<option value="">No Projects Found</option>');
-            } else {
-                projects.forEach(project => {
-                    projectFilter.append(`<option value="${project}">${project}</option>`);
-                });
-                if (currentSelection && projects.includes(currentSelection)) {
-                    projectFilter.val(currentSelection);
-                } else {
-                    projectFilter.val(projects[0]);
-                }
-                projectFilter.trigger('change');
+                projectFilter.append($('<option>', {
+                    value: '__no_projects__',
+                    text: 'No Projects Found',
+                    disabled: true
+                }));
             }
+            projects.forEach(project => {
+                projectFilter.append($('<option>', { value: project, text: project }));
+            });
+            projectFilter.val(projects.includes(currentSelection) ? currentSelection : '');
+            projectFilter.trigger('change');
 
             // Populate work location dropdown
             const workLocationFilter = $('#workLocationFilter');
             const currentLocation = workLocationFilter.val();
             workLocationFilter.empty();
             workLocationFilter.append($('<option>', { value: '', text: 'All Work Locations' }));
-            availableLocations.forEach(location => {
+            uniqueLocations.forEach(location => {
                 workLocationFilter.append($('<option>', { value: location, text: location }));
             });
-            workLocationFilter.val(availableLocations.includes(currentLocation) ? currentLocation : '');
+            workLocationFilter.val(uniqueLocations.includes(currentLocation) ? currentLocation : '');
             applyWorkLocationFilter(workLocationFilter.val());
-            applyEmployeeIdFilter($('#employeeIdFilter').val());
         }).catch(error => {
             console.error("Error fetching data:", error);
-            alert("An error occurred while fetching data. Please try again.");
+            alert(`Unable to load report data: ${error.message || error}`);
         });
+    }
+
+    async function fetchReportJson(url) {
+        const response = await fetch(url, { credentials: 'same-origin' });
+        if (!response.ok) {
+            throw new Error(`Report request failed with HTTP ${response.status}.`);
+        }
+
+        const body = await response.json();
+        if (body.ok === false) {
+            throw new Error(body.error?.message || 'The report request was rejected.');
+        }
+        return body;
+    }
+
+    async function fetchReportRows(path) {
+        const url = new URL(path, window.location.origin);
+        url.searchParams.set('page_size', '500');
+
+        const rows = [];
+        let totalPages = 1;
+
+        for (let page = 1; page <= totalPages; page += 1) {
+            url.searchParams.set('page', String(page));
+            const body = await fetchReportJson(url);
+
+            const pageRows = Array.isArray(body.data)
+                ? body.data
+                : (Array.isArray(body.results) ? body.results : null);
+            if (!pageRows) {
+                throw new Error('The report API returned an unexpected response.');
+            }
+
+            rows.push(...pageRows);
+            totalPages = Number(body.meta?.pages ?? 1);
+            if (!Number.isInteger(totalPages) || totalPages < 1) {
+                throw new Error('The report API returned invalid pagination metadata.');
+            }
+        }
+
+        return rows;
     }
 
     // Add zoom modal to the document body

@@ -1,0 +1,166 @@
+OpsTracking report-fix deployment instructions
+
+Status
+------
+The ZIP contains only the report-related runtime source files listed in
+OpsTracking_Production_Deploy_MANIFEST.txt. It is structurally arranged for
+extraction into a Django application root, but it is NOT verified against the
+live GoDaddy application or its Python runtime. Do not deploy until the
+pre-deployment confirmations below are complete.
+
+This repository has conflicting hosting information:
+- .htaccess currently names PassengerAppRoot
+  /home/n20m30upmqr6/subdomain/opstracking.ardurtechnology.com.
+- docs/CPANEL_DEPLOY.md describes both a subdomain application root and a
+  different opstracking_django directory/virtualenv. It also describes a
+  Flask-to-Django cutover, not necessarily the currently running production
+  revision.
+- .htaccess names a Python 3.11 virtualenv, while pyproject.toml requires
+  Python >=3.12 and the deployment document has a 3.12 activation example.
+
+The actual application root, active framework, virtualenv and deployed revision
+must be confirmed in cPanel before extracting anything. Do not infer them from
+the ZIP or copy a path from the documentation without checking.
+
+1. Identify the application root and runtime
+--------------------------------------------
+In cPanel, open Setup Python App and inspect the existing application (do not
+create a new one). Record its Application root, Application URL, Python version,
+startup file, entry point and virtualenv activation command.
+
+The correct Django application root is the directory containing manage.py,
+passenger_wsgi.py, opstracking/, apps/, templates/ and static/. Confirm that
+this is the application currently serving the target website. Compare the
+configured root and Passenger settings with the server's .htaccess. The
+repository's current .htaccess and deployment guide disagree about paths and
+Python versions; resolve that discrepancy with the live cPanel configuration.
+If the existing website is still Flask or uses a different app root, stop:
+this ZIP is not a Flask-to-Django cutover package.
+
+Also confirm that the current production revision/files have been identified.
+This package was made from branch feature/abhishek, including uncommitted local
+report changes. The production revision could not be inspected from this
+workspace.
+
+2. Back up production files and static output
+---------------------------------------------
+Before upload, use cPanel File Manager to create a dated backup of the confirmed
+Django application files, including Python source, templates, static source and
+the existing Passenger startup files. Keep .env and private uploads protected;
+do not include secrets in the deployment ZIP or an unsecured download.
+
+Find the active STATIC_ROOT from the deployed settings/environment. Back up
+that directory separately if it is not already inside the application-root
+backup. Do not assume that it is named staticfiles. Keep the backups outside
+the directories that will be overwritten and verify they are non-empty.
+
+3. Upload and extract
+---------------------
+Upload OpsTracking_Production_Deploy.zip using cPanel File Manager. Extract it
+directly into the confirmed Django application root (the directory containing
+manage.py). The archive entries start with apps/, core/, static/ and templates/;
+there is no enclosing parent folder. Confirm the cPanel extraction destination
+before accepting the extraction.
+
+The archive replaces only the nine paths in the accompanying manifest. Do not
+replace or delete other files. In particular, leave .env, passenger_wsgi.py,
+.htaccess, settings, requirements and migration files untouched.
+
+4. Dependencies, frontend and static collection
+------------------------------------------------
+No dependency was added or changed by these report fixes; do not run pip install
+for this package. There is no frontend package/build manifest or required
+JavaScript compilation step in the repository. The checked-in reports.js is
+loaded directly by the Django page.
+
+Static collection IS required because the cPanel settings use WhiteNoise's
+staticfiles storage. In Setup Python App, copy the exact virtualenv activation
+command shown for the confirmed application. In cPanel Terminal/SSH, activate
+that environment, change to the confirmed application root, and first inspect
+the effective static destination:
+
+  python manage.py shell --settings=opstracking.settings.cpanel -c "from django.conf import settings; print(settings.STATIC_ROOT)"
+
+Confirm the printed path is the expected production static output directory
+before writing to it. Then run:
+
+  python manage.py collectstatic --noinput --settings=opstracking.settings.cpanel
+
+Do not use a guessed virtualenv path. If the cPanel environment cannot import
+the project's installed Django settings, stop and resolve that runtime issue
+before collecting files.
+
+5. Passenger restart
+--------------------
+The package changes Python modules and templates, so restart the existing app
+after extraction and successful static collection. In cPanel Setup Python App,
+use the Restart control for the already-confirmed application. Do not edit
+.htaccess, passenger_wsgi.py, PassengerAppRoot, PassengerPython or the
+application startup/entry-point settings as part of this deployment.
+
+6. Application and browser checks
+---------------------------------
+Before exposing the updated page, run this non-migration check in the confirmed
+virtualenv and application root:
+
+  python manage.py check --settings=opstracking.settings.cpanel
+
+Do NOT run migrate or makemigrations on production for these report changes.
+The report fixes do not change database models or require a schema migration.
+The repository currently has unresolved migration graph conflicts; do not use
+this deployment to resolve them.
+
+After restarting, check the site's expected HTTPS URL and login. In the browser:
+- Open the report page and confirm reports.js?v=8 and the updated template load.
+- Confirm All Projects initially shows all projects; then verify a project
+  selection and its reset behave as expected.
+- Verify the location dropdown lists the returned nonblank locations without
+  whitespace duplicates; select a location and reset it.
+- Search for one employee by name and by employee ID using the same search box.
+- Test a single day and a multi-day inclusive range, including records on both
+  boundary dates. Submit invalid and reversed API dates and confirm a clear
+  validation error rather than a server error.
+- If the result has multiple API pages, verify rows from later pages appear.
+- Export CSV, Excel and PDF with project, location and text filters applied;
+  verify each export matches the filtered table.
+- Check the browser console/network panel for failed API requests or static 404s.
+
+These checks should be performed on a controlled staging copy if available.
+They have not been performed against the live GoDaddy application.
+
+7. GoDaddy error logs
+---------------------
+If the page fails, inspect the application log shown in cPanel Setup Python App
+and the configured PassengerAppLogFile in the application's .htaccess. The
+repository's .htaccess currently names /home/n20m30upmqr6/logs/opstracking, but
+confirm the live path in cPanel before using it.
+
+The Django file log defaults to <application-root>/logs/django.log and can be
+overridden by DJANGO_LOG_FILE in the server environment/.env. Do not print or
+share .env contents. Use cPanel File Manager or the authorized terminal to read
+the confirmed log path and capture the traceback and timestamp.
+
+8. Rollback
+-----------
+If the site returns HTTP 500 or Passenger fails to start:
+1. Use the cPanel application log to record the error and timestamp.
+2. Restore the backed-up copies of the package's nine paths and the prior static
+   output from the verified backups.
+3. Restart the same application using Setup Python App.
+4. Recheck login and the previously working page.
+
+No database migration is part of this package, so rollback must not involve
+restoring or changing the production database. Do not remove backups until the
+prior version has been verified.
+
+9. Do not perform these actions
+-------------------------------
+- Do not deploy/extract until the live application root, framework and Python
+  version are confirmed.
+- Do not modify .env, credentials, live settings, Passenger configuration or
+  .htaccess for this package.
+- Do not run migrate, makemigrations, createcachetable, database DDL, or any
+  production data operation.
+- Do not install/upgrade dependencies for these source-only changes.
+- Do not deploy this package automatically or treat successful ZIP extraction
+  as proof that production is compatible.

@@ -269,6 +269,26 @@ def test_session_date_range_includes_both_selected_days(as_employee, employee, m
     assert excluded_after.id not in {row["id"] for row in rows}
 
 
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"from": "not-a-date", "to": "2026-10-23"},
+        {"from": "2026-10-23", "to": "2026-10-22"},
+    ],
+)
+@pytest.mark.parametrize(
+    "endpoint",
+    ["/api/v1/tracking/sessions/", "/api/v1/allocations/indexing/"],
+)
+def test_report_source_endpoints_reject_invalid_date_ranges(
+    as_employee, endpoint, params
+):
+    response = as_employee.get(endpoint, params)
+
+    assert response.status_code == 400
+    assert response.data["ok"] is False
+
+
 def test_software_shift_date_range_includes_both_selected_days(api, employee):
     from apps.accounts.models import Employee, Role, User
     from tests.conftest import PASSWORD

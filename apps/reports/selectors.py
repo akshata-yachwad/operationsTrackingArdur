@@ -120,14 +120,6 @@ class ProductivitySelector(BaseSelector):
             _, end = day_bounds(f.date_to)
             q_date &= Q(start_time__lt=end)
 
-        is_current = True
-        if f.date_to and f.date_to < today_ist():
-            is_current = False
-
-        if is_current:
-            q_running = Q(end_time__isnull=True, is_started=SessionState.RUNNING)
-            return queryset.filter(q_date | q_running)
-
         return queryset.filter(q_date)
 
     def rows(self) -> list[dict]:
@@ -242,14 +234,6 @@ class SummarySelector(BaseSelector):
         if f.date_to:
             _, end = day_bounds(f.date_to)
             q_date &= Q(start_time__lt=end)
-
-        is_current = True
-        if f.date_to and f.date_to < today_ist():
-            is_current = False
-
-        if is_current:
-            q_running = Q(end_time__isnull=True, is_started=SessionState.RUNNING)
-            return queryset.filter(q_date | q_running)
 
         return queryset.filter(q_date)
 

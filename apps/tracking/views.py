@@ -22,7 +22,8 @@ from core.permissions import (
     IsAuthenticatedEmployee,
     IsOwnerOrSupervisor,
 )
-from core.timezone import today_ist
+from core.serializers import parse_date_range
+from core.timezone import day_bounds, today_ist
 
 
 class WorkSessionViewSet(ServiceMixin, EnvelopeMixin, viewsets.ReadOnlyModelViewSet):
@@ -52,16 +53,12 @@ class WorkSessionViewSet(ServiceMixin, EnvelopeMixin, viewsets.ReadOnlyModelView
             queryset = queryset.open()
         if params.get("today") == "true":
             queryset = queryset.for_day()
-        if date_from := params.get("from"):
-            from datetime import datetime
-            from core.timezone import start_of_day
-            dt = datetime.strptime(date_from, "%Y-%m-%d").date()
-            queryset = queryset.filter(start_time__gte=start_of_day(dt))
-        if date_to := params.get("to"):
-            from datetime import datetime
-            from core.timezone import day_bounds
-            dt = datetime.strptime(date_to, "%Y-%m-%d").date()
-            _, end_dt = day_bounds(dt)
+        date_from, date_to = parse_date_range(params)
+        if date_from:
+            start_dt, _ = day_bounds(date_from)
+            queryset = queryset.filter(start_time__gte=start_dt)
+        if date_to:
+            _, end_dt = day_bounds(date_to)
             queryset = queryset.filter(start_time__lt=end_dt)
         return queryset
 
@@ -588,22 +585,17 @@ class SoftwareShiftViewSet(viewsets.ViewSet):
         if not request.user.is_supervisor:
             return EnvelopeMixin().error('Unauthorized', status=403)
             
-        date_from = request.query_params.get('from')
-        date_to = request.query_params.get('to')
-        
-        from datetime import datetime
         qs = SoftwareShift.objects.all()
         from apps.tracking.models import Attendance, AttendanceStatus
         leave_qs = Attendance.objects.filter(status=AttendanceStatus.LEAVE)
-        
+
+        date_from, date_to = parse_date_range(request.query_params)
         if date_from:
-            dt_from = datetime.strptime(date_from, '%Y-%m-%d').date()
-            qs = qs.filter(date__gte=dt_from)
-            leave_qs = leave_qs.filter(date__gte=dt_from)
+            qs = qs.filter(date__gte=date_from)
+            leave_qs = leave_qs.filter(date__gte=date_from)
         if date_to:
-            dt_to = datetime.strptime(date_to, '%Y-%m-%d').date()
-            qs = qs.filter(date__lte=dt_to)
-            leave_qs = leave_qs.filter(date__lte=dt_to)
+            qs = qs.filter(date__lte=date_to)
+            leave_qs = leave_qs.filter(date__lte=date_to)
             
         from apps.accounts.models import Employee
         emps = {e.employee_id: e for e in Employee.objects.all()}

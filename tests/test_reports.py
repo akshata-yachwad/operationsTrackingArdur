@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import csv
 import io
-from datetime import timedelta
+from datetime import date, timedelta
 
 import pytest
 
@@ -23,7 +23,7 @@ from apps.reports.selectors import (
 from apps.reports.services import ReportService
 from apps.tracking.models import SessionState, WorkSession
 from core.exceptions import ValidationError
-from core.timezone import now_ist, today_ist
+from core.timezone import day_bounds, now_ist, today_ist
 
 pytestmark = pytest.mark.django_db
 
@@ -142,6 +142,99 @@ def test_date_range_filter_excludes_sessions_outside_the_window(employee):
     rows = SummarySelector(filters).rows()
 
     assert [r["id"] for r in rows] == [recent.id]
+
+
+def test_summary_selector_filters_same_day_at_ist_boundaries(employee):
+    day = date(2026, 10, 22)
+    start, end = day_bounds(day)
+    first = WorkSession.objects.create(
+        emp_id=employee.emp_id,
+        project="P",
+        is_started=SessionState.COMPLETED,
+        start_time=start,
+    )
+    last = WorkSession.objects.create(
+        emp_id=employee.emp_id,
+        project="P",
+        is_started=SessionState.COMPLETED,
+        start_time=end - timedelta(microseconds=1),
+    )
+    outside = WorkSession.objects.create(
+        emp_id=employee.emp_id,
+        project="P",
+        is_started=SessionState.COMPLETED,
+        start_time=end,
+    )
+
+    from apps.reports.selectors import SummarySelector
+
+    rows = SummarySelector(ReportFilters(date_from=day, date_to=day)).rows()
+
+    assert {row["id"] for row in rows} == {first.id, last.id}
+    assert outside.id not in {row["id"] for row in rows}
+
+
+def test_current_day_filter_does_not_include_running_sessions_from_other_days(employee):
+    today = today_ist()
+    start, _ = day_bounds(today)
+    yesterday_running = WorkSession.objects.create(
+        emp_id=employee.emp_id,
+        project="P",
+        is_started=SessionState.RUNNING,
+        start_time=start - timedelta(microseconds=1),
+    )
+    today_session = WorkSession.objects.create(
+        emp_id=employee.emp_id,
+        project="P",
+        is_started=SessionState.COMPLETED,
+        start_time=start,
+    )
+    filters = ReportFilters(date_from=today, date_to=today)
+
+    from apps.reports.selectors import SummarySelector
+
+    summary_rows = SummarySelector(filters).rows()
+    productivity_rows = ProductivitySelector(filters).rows()
+
+    assert [row["id"] for row in summary_rows] == [today_session.id]
+    assert yesterday_running.id not in {row["id"] for row in summary_rows}
+    assert len(productivity_rows) == 1
+    assert productivity_rows[0]["sessions"] == 1
+
+
+def test_multi_day_range_includes_the_entire_end_date(employee):
+    start_day = date(2026, 10, 21)
+    end_day = date(2026, 10, 23)
+    first, _ = day_bounds(start_day)
+    _, end = day_bounds(end_day)
+    first_day_record = WorkSession.objects.create(
+        emp_id=employee.emp_id,
+        project="P",
+        is_started=SessionState.COMPLETED,
+        start_time=first,
+    )
+    included = WorkSession.objects.create(
+        emp_id=employee.emp_id,
+        project="P",
+        is_started=SessionState.COMPLETED,
+        start_time=end - timedelta(microseconds=1),
+    )
+    excluded = WorkSession.objects.create(
+        emp_id=employee.emp_id,
+        project="P",
+        is_started=SessionState.COMPLETED,
+        start_time=end,
+    )
+
+    from apps.reports.selectors import SummarySelector
+
+    rows = SummarySelector(
+        ReportFilters(date_from=start_day, date_to=end_day)
+    ).rows()
+
+    assert included.start_time >= first
+    assert {row["id"] for row in rows} == {first_day_record.id, included.id}
+    assert excluded.id not in {row["id"] for row in rows}
 
 
 def test_get_selector_rejects_an_unknown_report_key():
