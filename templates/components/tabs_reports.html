@@ -32,6 +32,8 @@
                     <select id="workLocationFilter" class="reports-work-location-dropdown">
                         <option value="">All Work Locations</option>
                     </select>
+                    <input type="text" id="employeeIdFilter" class="reports-search-field"
+                        placeholder="Filter by Emp ID..." aria-label="Filter by employee ID">
                     <div class="search-container">
                         <input type="text" id="searchField" class="reports-search-field" placeholder="Search...">
                         <span id="clearSearch" class="clear-search">×</span>
@@ -39,9 +41,10 @@
                     <div id="lengthMenuContainer" class="length-menu-container"></div>
                     <div class="download-container">
                         <select id="downloadFormat" class="reports-download-dropdown">
-                            <option value="">Export</option>
+                            <option value="">Export as...</option>
+                            <option value="pdf">PDF</option>
                             <option value="csv">CSV</option>
-                            <option value="excel">Excel</option>
+                            <option value="xlsx">Excel</option>
                         </select>
                         <button id="downloadButton" title="Download" class="reports-download-button"
                             aria-label="Download">

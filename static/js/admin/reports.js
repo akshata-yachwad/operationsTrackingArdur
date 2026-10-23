@@ -884,99 +884,182 @@ $(document).ready(function () {
     // Modified download button click handler
     $('#downloadButton').on('click', function () {
         const format = $('#downloadFormat').val();
-        const filteredData = table.rows({ search: 'applied' }).data().toArray(); // Get only filtered data
-        const visibleHeaderTexts = table.columns(':visible').header().toArray().map(th => $(th).text());
-        const headers = Object.values(headerMap).filter(h => visibleHeaderTexts.includes(h)); // Use mapped headers
-
+        if (!format) {
+            alert('Choose PDF, Excel, or CSV before downloading.');
+            return;
+        }
+        const columns = getExportColumns();
+        if (!columns.length) {
+            alert('There are no visible report columns to export.');
+            return;
+        }
+        const rows = table.rows({ search: 'applied' }).data().toArray();
         if (format === 'csv') {
-            downloadCSV(filteredData, headers);
-        } else if (format === 'excel') {
-            downloadExcel(filteredData, headers);
+            downloadCSV(rows, columns);
+        } else if (format === 'xlsx') {
+            downloadExcel(rows, columns);
+        } else if (format === 'pdf') {
+            downloadPDF(rows, columns);
         }
     });
 
-    // Modified CSV download function
-    function downloadCSV(data, headers) {
-        const csvRows = [];
-
-        // Add headers
-        csvRows.push(headers.join(','));
-
-        // Add data rows
-        data.forEach(row => {
-            const values = headers.map(headerText => {
-                // Find the data key for this header
-                const dataKey = Object.keys(headerMap).find(k => headerMap[k] === headerText);
-                let value = row[dataKey];
-
-                // Handle special formatted columns
-                if (dataKey === 'date') {
-                    value = row.start_time ? row.start_time.split('T')[0] : '';
-                } else if (dataKey === 'start_time') {
-                    value = row.start_time ? row.start_time.split('T')[1].substring(0, 8) : '';
-                } else if (dataKey === 'end_time') {
-                    value = row.end_time ? row.end_time.split('T')[1].substring(0, 8) : '';
-                } else if (dataKey === 'total_time' || dataKey === 'average_time') {
-                    value = formatTime(value);
-                } else if (dataKey === 'status') {
-                    value = row.end_time ? 'Completed' : 'In Progress';
-                }
-
-                return `"${(value || '').toString().replace(/"/g, '""')}"`;
-            });
-            csvRows.push(values.join(','));
-        });
-
-        const startDate = $('#startDate').val();
-        const endDate = $('#endDate').val();
-        const dateRangeStr = startDate === endDate ? startDate : `${startDate}_to_${endDate}`;
-        const fileName = `employee_work_data_${dateRangeStr}.csv`;
-
-        const csvContent = "data:text/csv;charset=utf-8," + csvRows.join('\n');
-        const encodedUri = encodeURI(csvContent);
-        const link = document.createElement("a");
-        link.setAttribute("href", encodedUri);
-        link.setAttribute("download", fileName);
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+    function getExportColumns() {
+        return table.columns(':visible').indexes().toArray()
+            .filter(index => index > 0)
+            .map(index => {
+                const label = $(table.column(index).header()).text().trim();
+                const key = Object.keys(headerMap).find(item => headerMap[item] === label);
+                return key ? { key, label } : null;
+            })
+            .filter(Boolean);
     }
 
-    // Modified Excel download function
-    function downloadExcel(data, headers) {
-        const formattedData = data.map(row => {
-            const obj = {};
-            headers.forEach(headerText => {
-                const dataKey = Object.keys(headerMap).find(k => headerMap[k] === headerText);
-                let value = row[dataKey];
+    function getReportCellValue(row, key) {
+        if (key === 'date') {
+            return row.start_time ? String(row.start_time).split('T')[0] : (row.date || '');
+        }
+        if (key === 'start_time' || key === 'end_time') {
+            const value = row[key];
+            return value && String(value).includes('T') ? String(value).split('T')[1].substring(0, 8) : '';
+        }
+        if (key === 'project_name') return row.project_name || row.project || '';
+        if (key === 'total_time') return formatTime(row.total_time);
+        if (key === 'status') {
+            if (row.status) return row.status;
+            if (row.is_paused) return `Paused${row.pause_reason ? ` (${row.pause_reason})` : ''}`;
+            return row.end_time ? 'Completed' : 'In Progress';
+        }
+        return row[key] ?? '';
+    }
 
-                // Handle special formatted columns
-                if (dataKey === 'date') {
-                    value = row.start_time ? row.start_time.split('T')[0] : '';
-                } else if (dataKey === 'start_time') {
-                    value = row.start_time ? row.start_time.split('T')[1].substring(0, 8) : '';
-                } else if (dataKey === 'end_time') {
-                    value = row.end_time ? row.end_time.split('T')[1].substring(0, 8) : '';
-                } else if (dataKey === 'total_time' || dataKey === 'average_time') {
-                    value = formatTime(value);
-                } else if (dataKey === 'status') {
-                    value = row.end_time ? 'Completed' : 'In Progress';
-                }
-
-                obj[headerText] = value;
-            });
-            return obj;
-        });
-
+    function getExportFilename(extension) {
         const startDate = $('#startDate').val();
         const endDate = $('#endDate').val();
         const dateRangeStr = startDate === endDate ? startDate : `${startDate}_to_${endDate}`;
-        const fileName = `employee_work_data_${dateRangeStr}.xlsx`;
+        const empId = $('#employeeIdFilter').val().trim().replace(/[^a-zA-Z0-9_-]/g, '');
+        const employeeSuffix = empId ? `_emp_${empId}` : '';
+        return `employee_work_data_${dateRangeStr}${employeeSuffix}.${extension}`;
+    }
 
-        const worksheet = XLSX.utils.json_to_sheet(formattedData);
+    function downloadCSV(rows, columns) {
+        const csvRows = [
+            columns.map(column => column.label),
+            ...rows.map(row => columns.map(column => getReportCellValue(row, column.key)))
+        ];
+        const csvContent = '\uFEFF' + csvRows.map(row =>
+            row.map(value => {
+                const text = String(value ?? '');
+                const safeText = /^[\t\r ]*[=+\-@]/.test(text) ? `'${text}` : text;
+                return `"${safeText.replace(/"/g, '""')}"`;
+            }).join(',')
+        ).join('\r\n');
+        downloadBlob(csvContent, 'text/csv;charset=utf-8;', getExportFilename('csv'));
+    }
+
+    function downloadExcel(rows, columns) {
+        if (!window.XLSX) {
+            alert('Excel export is unavailable. Please reload the page and try again.');
+            return;
+        }
+        const worksheet = XLSX.utils.aoa_to_sheet([
+            columns.map(column => column.label),
+            ...rows.map(row => columns.map(column => getReportCellValue(row, column.key)))
+        ]);
         const workbook = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(workbook, worksheet, "Employee Work Data");
-        XLSX.writeFile(workbook, fileName);
+        XLSX.utils.book_append_sheet(workbook, worksheet, 'Employee Work Data');
+        XLSX.writeFile(workbook, getExportFilename('xlsx'));
+    }
+
+    function downloadPDF(rows, columns) {
+        const PdfDocument = window.jspdf?.jsPDF;
+        if (!PdfDocument) {
+            alert('PDF export is unavailable. Please reload the page and try again.');
+            return;
+        }
+
+        const pdf = new PdfDocument({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+        const margin = 28;
+        const pageWidth = pdf.internal.pageSize.getWidth();
+        const pageHeight = pdf.internal.pageSize.getHeight();
+        const columnWeights = columns.map(column => ({
+            ...column,
+            weight: column.key === 'name' || column.key === 'project_name' ? 1.4 : 1
+        }));
+        const totalWeight = columnWeights.reduce((sum, column) => sum + column.weight, 0);
+        const columnWidths = columnWeights.map(column =>
+            (pageWidth - margin * 2) * column.weight / totalWeight
+        );
+        const reportTitle = 'Employee Work Report';
+        const startDate = $('#startDate').val();
+        const endDate = $('#endDate').val();
+        const employeeId = $('#employeeIdFilter').val().trim();
+
+        function drawPageHeading() {
+            pdf.setFont('helvetica', 'bold');
+            pdf.setFontSize(14);
+            pdf.text(reportTitle, margin, margin + 2);
+            pdf.setFont('helvetica', 'normal');
+            pdf.setFontSize(8);
+            pdf.text(`Date range: ${startDate} to ${endDate}${employeeId ? ` | Employee ID: ${employeeId}` : ''}`, margin, margin + 18);
+            pdf.text(`Rows: ${rows.length}`, pageWidth - margin, margin + 18, { align: 'right' });
+        }
+
+        function drawTableHeader(y) {
+            const headerHeight = 22;
+            let x = margin;
+            pdf.setFillColor(44, 62, 79);
+            pdf.setTextColor(255, 255, 255);
+            pdf.setFont('helvetica', 'bold');
+            pdf.setFontSize(7);
+            columns.forEach((column, index) => {
+                const width = columnWidths[index];
+                pdf.rect(x, y, width, headerHeight, 'F');
+                pdf.text(pdf.splitTextToSize(column.label, width - 8), x + 4, y + 14);
+                x += width;
+            });
+            pdf.setTextColor(0, 0, 0);
+            return y + headerHeight;
+        }
+
+        drawPageHeading();
+        let y = drawTableHeader(margin + 30);
+        rows.forEach(row => {
+            const values = columns.map((column, index) => {
+                const text = String(getReportCellValue(row, column.key) ?? '');
+                return (text ? pdf.splitTextToSize(text, columnWidths[index] - 8) : ['']).slice(0, 3);
+            });
+            const rowHeight = Math.max(20, ...values.map(lines => lines.length * 9 + 8));
+            if (y + rowHeight > pageHeight - margin) {
+                pdf.addPage();
+                drawPageHeading();
+                y = drawTableHeader(margin + 30);
+            }
+
+            let x = margin;
+            values.forEach((lines, index) => {
+                const width = columnWidths[index];
+                pdf.setDrawColor(210, 215, 220);
+                pdf.rect(x, y, width, rowHeight);
+                pdf.setFont('helvetica', 'normal');
+                pdf.setFontSize(7);
+                pdf.text(lines, x + 4, y + 12);
+                x += width;
+            });
+            y += rowHeight;
+        });
+        pdf.save(getExportFilename('pdf'));
+    }
+
+    function downloadBlob(content, mimeType, filename) {
+        const blob = new Blob([content], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 0);
     }
 
     // Refresh button click event
@@ -1030,6 +1113,17 @@ $(document).ready(function () {
             ? `^${$.fn.dataTable.util.escapeRegex(location)}$`
             : '';
         table.column(12).search(searchValue, true, false).draw();
+    }
+
+    $('#employeeIdFilter').on('input', function () {
+        applyEmployeeIdFilter($(this).val());
+    });
+
+    function applyEmployeeIdFilter(employeeId) {
+        const searchValue = employeeId.trim()
+            ? $.fn.dataTable.util.escapeRegex(employeeId.trim())
+            : '';
+        table.column(1).search(searchValue, true, false).draw();
     }
 
     // Search field keyup event
@@ -1161,6 +1255,7 @@ $(document).ready(function () {
             });
             workLocationFilter.val(availableLocations.includes(currentLocation) ? currentLocation : '');
             applyWorkLocationFilter(workLocationFilter.val());
+            applyEmployeeIdFilter($('#employeeIdFilter').val());
         }).catch(error => {
             console.error("Error fetching data:", error);
             alert("An error occurred while fetching data. Please try again.");
