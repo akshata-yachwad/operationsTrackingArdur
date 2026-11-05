@@ -123,10 +123,13 @@
                         <label for="attEndDate">To:</label>
                         <input type="date" id="attEndDate" class="reports-date-picker">
                     </div>
-                    <select id="attProjectFilter" class="reports-project-dropdown">
+                    <select id="attProjectFilter" class="reports-project-dropdown" aria-label="Filter by project">
                         <option value="">All Projects</option>
                     </select>
-                    <input type="text" id="attEmpIdFilter" class="reports-search-field" placeholder="Search by Emp ID" style="width: 200px;">
+                    <select id="attLocationFilter" class="reports-project-dropdown" aria-label="Filter by location">
+                        <option value="">All Locations</option>
+                    </select>
+                    <input type="text" id="attEmpIdFilter" class="reports-search-field" placeholder="Search by employee ID or name" aria-label="Search by employee ID or name" style="width: 220px;">
                     <button id="refreshAttendanceButton" title="Refresh" class="reports-refresh-button" aria-label="Refresh">
                         <i class="fas fa-sync-alt"></i> Refresh
                     </button>
@@ -134,18 +137,20 @@
                         <i class="fas fa-file-excel"></i> Export
                     </button>
                 </div>
-                <div class="reports-table-container">
-                    <table id="attendanceReportTable" class="reports-data-table" width="100%">
+                <div class="reports-table-container attendance-table-container">
+                <table id="attendanceReportTable" class="reports-data-table attendance-report-table" width="100%">
                         <thead>
                               <tr>
                                   <th>Sr No</th>
                                   <th>Date</th>
                                   <th>Emp ID</th>
                                   <th>Emp Name</th>
-                                  <th>Status</th>
-                                  <th>First Login</th>
-                                  <th>Last Logout</th>
-                                  <th>Net Working Hours</th>
+                              <th>Location</th>
+                              <th>Project</th>
+                              <th>Status</th>
+                              <th>First Login</th>
+                              <th>Last Logout</th>
+                              <th>Net Working Hours</th>
                               </tr>
                         </thead>
                         <tbody></tbody>

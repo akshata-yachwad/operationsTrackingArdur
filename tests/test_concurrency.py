@@ -19,6 +19,7 @@ from __future__ import annotations
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
 
 import pytest
 from django.db import connections
@@ -29,10 +30,10 @@ from apps.breaks.constants import BREAK_ALLOWANCES
 from apps.breaks.models import BreakTime
 from apps.breaks.services import BreakService
 from apps.masters.models import ClientCode, Project, WorkType
-from apps.tracking.models import SessionState, Target, WorkSession
-from apps.tracking.services import TargetService, WorkSessionService
+from apps.tracking.models import SessionState, SoftwareShift, Target, WorkSession
+from apps.tracking.services import ShiftService, TargetService, WorkSessionService
 from core.exceptions import ConflictError
-from core.timezone import today_ist
+from core.timezone import now_ist, today_ist
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -124,6 +125,36 @@ def test_concurrent_pause_and_resume_do_not_corrupt_paused_elapsed(masters):
     # paused_elapsed was double-counted by two "successful" pauses.
     assert session.is_paused is True
     assert sum(1 for r in results if r is not None) == 1
+
+
+def test_concurrent_software_shift_ends_are_idempotent(monkeypatch):
+    if not connections["default"].features.has_select_for_update:
+        pytest.skip("The configured database does not support row-level SELECT FOR UPDATE.")
+
+    employee = _make_user("RACESHIFT")
+    end = now_ist()
+    start = end - timedelta(hours=3)
+    shift = SoftwareShift.objects.create(
+        emp_id=employee.emp_id,
+        date=end.date(),
+        start_time=start,
+        updated_at=start,
+        accumulated_seconds=120,
+    )
+    monkeypatch.setattr("apps.tracking.services.now_ist", lambda: end)
+
+    def end_shift():
+        return ShiftService(actor=employee).end_software_shift()
+
+    results, errors = _run_concurrently(end_shift, count=2)
+
+    shift.refresh_from_db()
+    assert errors == [None, None]
+    assert sum(result is not None for result in results) == 1
+    assert shift.is_ended is True
+    assert shift.end_time == end
+    assert shift.accumulated_seconds == 10_920
+    assert shift.total_time == "03:02:00"
 
 
 # ── breaks: the documented backstop actually holds ─────────────────────

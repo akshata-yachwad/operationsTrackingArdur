@@ -8,11 +8,11 @@ filters, target roll-up, and the read serializer's derived fields.
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
 
-from apps.tracking.models import SessionState, SoftwareShift, Target, WorkSession
+from apps.tracking.models import Attendance, SessionState, SoftwareShift, Target, WorkSession
 from apps.tracking.services import TargetService, WorkSessionService
 from core.exceptions import ConflictError, NotFoundError, PermissionDeniedError, ValidationError
 from core.timezone import now_ist, start_of_day, today_ist
@@ -328,6 +328,162 @@ def test_software_shift_date_range_includes_both_selected_days(api, employee):
         f"softshift_{included_start.id}",
         f"softshift_{included_end.id}",
     }
+
+
+def test_software_shift_start_is_idempotent(api, employee):
+    api.force_authenticate(user=employee)
+
+    first = api.post("/api/v1/tracking/software-shifts/start-shift/")
+    second = api.post("/api/v1/tracking/software-shifts/start-shift/")
+
+    assert first.status_code == second.status_code == 200
+    assert SoftwareShift.objects.filter(emp_id=employee.emp_id, date=today_ist()).count() == 1
+    attendance = Attendance.objects.get(emp_id=employee.emp_id, date=today_ist())
+    assert attendance.first_login is not None
+
+
+def test_daily_attendance_shift_end_is_idempotent(api, employee, monkeypatch):
+    start = now_ist()
+    clock = [start]
+    monkeypatch.setattr("apps.tracking.services.now_ist", lambda: clock[0])
+    api.force_authenticate(user=employee)
+
+    started = api.post("/api/v1/tracking/attendance/start-shift/")
+    clock[0] = start + timedelta(hours=8)
+    ended = api.post("/api/v1/tracking/attendance/end-shift/")
+    attendance = Attendance.objects.get(emp_id=employee.emp_id, date=start.date())
+    first_end = attendance.last_logout
+    repeated = api.post("/api/v1/tracking/attendance/end-shift/")
+
+    attendance.refresh_from_db()
+    assert started.status_code == ended.status_code == repeated.status_code == 200
+    assert attendance.first_login == start
+    assert attendance.last_logout == first_end == clock[0]
+
+
+def test_software_shift_pause_and_resume_use_server_times(api, employee, monkeypatch):
+    start = now_ist() - timedelta(hours=1)
+    pause = start + timedelta(minutes=20)
+    resume = start + timedelta(minutes=40)
+    clock = [pause]
+    shift = SoftwareShift.objects.create(
+        emp_id=employee.emp_id,
+        date=start.date(),
+        start_time=start,
+        updated_at=start,
+        accumulated_seconds=30,
+    )
+    monkeypatch.setattr("apps.tracking.services.now_ist", lambda: clock[0])
+    api.force_authenticate(user=employee)
+
+    paused = api.post("/api/v1/tracking/software-shifts/pause/")
+    shift.refresh_from_db()
+    assert paused.status_code == 200
+    assert shift.accumulated_seconds == 1_230
+    assert shift.is_paused is True
+    assert shift.pause_start == pause
+    assert shift.updated_at == pause
+
+    clock[0] = resume
+    resumed = api.post("/api/v1/tracking/software-shifts/resume/")
+    shift.refresh_from_db()
+    assert resumed.status_code == 200
+    assert shift.accumulated_seconds == 1_230
+    assert shift.is_paused is False
+    assert shift.pause_start is None
+    assert shift.updated_at == resume
+
+
+def test_software_shift_end_is_idempotent(api, employee, monkeypatch):
+    day = today_ist()
+    start = now_ist() - timedelta(hours=3)
+    end = start + timedelta(hours=2)
+    shift = SoftwareShift.objects.create(
+        emp_id=employee.emp_id,
+        date=day,
+        start_time=start,
+        updated_at=start,
+        accumulated_seconds=120,
+    )
+    attendance = Attendance.objects.create(
+        emp_id=employee.emp_id,
+        date=day,
+        first_login=start,
+    )
+    monkeypatch.setattr("apps.tracking.services.now_ist", lambda: end)
+    api.force_authenticate(user=employee)
+
+    first = api.post("/api/v1/tracking/software-shifts/end-shift/")
+    first_end_time = SoftwareShift.objects.get(pk=shift.pk).end_time
+    second = api.post("/api/v1/tracking/software-shifts/end-shift/")
+
+    shift.refresh_from_db()
+    attendance.refresh_from_db()
+    assert first.status_code == second.status_code == 200
+    assert shift.is_ended is True
+    assert shift.end_time == first_end_time == end
+    assert shift.accumulated_seconds == 7_320
+    assert shift.total_time == "02:02:00"
+    assert attendance.last_logout == end
+
+
+def test_shift_status_flags_prior_day_incomplete_without_changing_it(api, employee):
+    prior_day = today_ist() - timedelta(days=1)
+    start = start_of_day(prior_day) + timedelta(hours=8)
+    shift = SoftwareShift.objects.create(
+        emp_id=employee.emp_id,
+        date=prior_day,
+        start_time=start,
+        updated_at=start,
+    )
+    api.force_authenticate(user=employee)
+
+    response = api.get("/api/v1/tracking/software-shifts/status/")
+
+    shift.refresh_from_db()
+    status = response.data["data"]
+    incomplete_shift = status["incomplete_shifts"][0]
+    assert response.status_code == 200
+    assert status["incomplete_shift_count"] == 1
+    assert incomplete_shift["id"] == shift.id
+    assert incomplete_shift["date"] == prior_day.isoformat()
+    assert datetime.fromisoformat(incomplete_shift["start_time"]) == start
+    assert shift.end_time is None
+    assert shift.is_ended is False
+    assert shift.total_time == "00:00:00"
+
+
+def test_super_admin_report_flags_prior_day_incomplete_shift(api, employee):
+    from apps.accounts.models import Employee as EmployeeRecord
+    from apps.accounts.models import Role, User
+
+    prior_day = today_ist() - timedelta(days=1)
+    shift = SoftwareShift.objects.create(
+        emp_id=employee.emp_id,
+        date=prior_day,
+        start_time=start_of_day(prior_day),
+        updated_at=start_of_day(prior_day),
+    )
+    admin_employee = EmployeeRecord.objects.create(
+        employee_id="SHIFT-ADMIN",
+        name="Shift Admin",
+        role=Role.SUPER_ADMIN,
+    )
+    admin = User.objects.create_user(
+        emp_id=admin_employee.employee_id,
+        name=admin_employee.name,
+        password="test-password-123",
+    )
+    api.force_authenticate(user=admin)
+
+    response = api.get(
+        "/api/v1/tracking/software-shifts/",
+        {"from": prior_day.isoformat(), "to": prior_day.isoformat()},
+    )
+
+    row = next(row for row in response.data["data"] if row["id"] == f"softshift_{shift.id}")
+    assert row["status"] == "Present"
+    assert row["recovery_status"] == "needs_review"
 
 
 # ── the read serializer's derived fields ─────────────────────

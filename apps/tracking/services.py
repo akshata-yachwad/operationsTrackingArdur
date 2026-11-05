@@ -13,7 +13,14 @@ from __future__ import annotations
 
 from django.db import IntegrityError, transaction
 
-from apps.tracking.models import SessionState, Target, WorkSession
+from apps.tracking.models import (
+    Attendance,
+    AttendanceStatus,
+    SessionState,
+    SoftwareShift,
+    Target,
+    WorkSession,
+)
 from core.events import publish
 from core.exceptions import ConflictError, ValidationError
 from core.services import BaseService
@@ -346,6 +353,162 @@ class WorkSessionService(BaseService):
                 "total_time": session.total_time,
             },
         )
+
+
+class ShiftService(BaseService):
+    """Transactional updates for daily attendance and simplified-project shifts."""
+
+    @transaction.atomic
+    def start_attendance(self) -> Attendance:
+        actor = self.require_actor()
+        now = now_ist()
+        attendance = self._locked_attendance(actor.emp_id, now.date())
+
+        if not attendance.first_login:
+            attendance.first_login = now
+            attendance.status = AttendanceStatus.PRESENT
+            attendance.save(update_fields=["first_login", "status"])
+
+        return attendance
+
+    @transaction.atomic
+    def end_attendance(self) -> Attendance | None:
+        actor = self.require_actor()
+        now = now_ist()
+        attendance = (
+            Attendance.objects.select_for_update()
+            .filter(
+                emp_id=actor.emp_id,
+                date__lte=now.date(),
+                first_login__isnull=False,
+                last_logout__isnull=True,
+            )
+            .order_by("-date", "-first_login")
+            .first()
+        )
+        if attendance:
+            attendance.last_logout = now
+            attendance.save(update_fields=["last_logout"])
+        return attendance
+
+    @transaction.atomic
+    def start_software_shift(self) -> SoftwareShift:
+        actor = self.require_actor()
+        now = now_ist()
+        shift, _ = SoftwareShift.objects.get_or_create(
+            emp_id=actor.emp_id,
+            date=now.date(),
+            defaults={
+                "start_time": now,
+                "updated_at": now,
+                "accumulated_seconds": 0,
+            },
+        )
+        shift = SoftwareShift.objects.select_for_update().get(pk=shift.pk)
+
+        attendance = self._locked_attendance(actor.emp_id, now.date())
+        if not attendance.first_login:
+            attendance.first_login = now
+            attendance.status = AttendanceStatus.PRESENT
+            attendance.save(update_fields=["first_login", "status"])
+
+        return shift
+
+    @transaction.atomic
+    def pause_software_shift(self) -> bool:
+        actor = self.require_actor()
+        now = now_ist()
+        shift = (
+            SoftwareShift.objects.select_for_update()
+            .filter(emp_id=actor.emp_id, date=now.date())
+            .first()
+        )
+        if not shift or shift.is_ended or shift.is_paused:
+            return False
+
+        shift.accumulated_seconds += (now - shift.updated_at).total_seconds()
+        shift.is_paused = True
+        shift.pause_start = now
+        shift.updated_at = now
+        shift.save(
+            update_fields=[
+                "accumulated_seconds",
+                "is_paused",
+                "pause_start",
+                "updated_at",
+            ]
+        )
+        return True
+
+    @transaction.atomic
+    def resume_software_shift(self) -> bool:
+        actor = self.require_actor()
+        now = now_ist()
+        shift = (
+            SoftwareShift.objects.select_for_update()
+            .filter(emp_id=actor.emp_id, date=now.date())
+            .first()
+        )
+        if not shift or shift.is_ended or not shift.is_paused:
+            return False
+
+        shift.is_paused = False
+        shift.pause_start = None
+        shift.updated_at = now
+        shift.save(update_fields=["is_paused", "pause_start", "updated_at"])
+        return True
+
+    @transaction.atomic
+    def end_software_shift(self) -> SoftwareShift | None:
+        actor = self.require_actor()
+        now = now_ist()
+        shift = (
+            SoftwareShift.objects.select_for_update()
+            .filter(emp_id=actor.emp_id, date=now.date())
+            .first()
+        )
+        if not shift or shift.is_ended:
+            return None
+
+        if not shift.is_paused:
+            shift.accumulated_seconds += (now - shift.updated_at).total_seconds()
+
+        shift.is_paused = False
+        shift.is_ended = True
+        shift.end_time = now
+        shift.updated_at = now
+
+        total_sec = shift.accumulated_seconds
+        hours = int(total_sec // 3600)
+        minutes = int((total_sec % 3600) // 60)
+        seconds = int(total_sec % 60)
+        shift.total_time = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        shift.save(
+            update_fields=[
+                "accumulated_seconds",
+                "is_paused",
+                "is_ended",
+                "end_time",
+                "updated_at",
+                "total_time",
+            ]
+        )
+
+        attendance = (
+            Attendance.objects.select_for_update()
+            .filter(emp_id=actor.emp_id, date=now.date())
+            .first()
+        )
+        if attendance:
+            attendance.last_logout = now
+            attendance.save(update_fields=["last_logout"])
+
+        return shift
+
+    @staticmethod
+    def _locked_attendance(emp_id: str, day) -> Attendance:
+        attendance, _ = Attendance.objects.get_or_create(emp_id=emp_id, date=day)
+        return Attendance.objects.select_for_update().get(pk=attendance.pk)
 
 
 class TargetService(BaseService):

@@ -2,12 +2,26 @@
 
 from __future__ import annotations
 
-from django.db.models import Count, Sum
+from datetime import date, datetime, timedelta
+
+from django.db import connection
+from django.db.models import Count, Q, Sum
+from django.db.models.functions import Trim
+from django.http import HttpResponse
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.views import APIView
 
-from apps.tracking.models import Target, WorkSession
+from apps.accounts.models import Employee, LoginHistory
+from apps.breaks.models import BreakTime
+from apps.masters.models import Project, Shift
+from apps.tracking.models import (
+    Attendance,
+    AttendanceStatus,
+    SoftwareShift,
+    Target,
+    WorkSession,
+)
 from apps.tracking.serializers import (
     EndSessionSerializer,
     StartSessionSerializer,
@@ -15,7 +29,7 @@ from apps.tracking.serializers import (
     TargetWriteSerializer,
     WorkSessionSerializer,
 )
-from apps.tracking.services import TargetService, WorkSessionService
+from apps.tracking.services import ShiftService, TargetService, WorkSessionService
 from core.mixins import EnvelopeMixin, ServiceMixin
 from core.permissions import (
     IsAdminOrSupervisor,
@@ -23,7 +37,7 @@ from core.permissions import (
     IsOwnerOrSupervisor,
 )
 from core.serializers import parse_date_range
-from core.timezone import day_bounds, today_ist
+from core.timezone import IST, day_bounds, now_ist, start_of_day, to_ist, today_ist
 
 
 class WorkSessionViewSet(ServiceMixin, EnvelopeMixin, viewsets.ReadOnlyModelViewSet):
@@ -280,15 +294,6 @@ class MonthlyAttendanceView(EnvelopeMixin, APIView):
         return self.ok(results)
 
 
-from apps.tracking.models import Attendance, AttendanceStatus
-
-class AttendanceViewSet(viewsets.ViewSet):
-    permission_classes = [IsAuthenticatedEmployee]
-
-
-
-from apps.tracking.models import Attendance, AttendanceStatus
-
 class AttendanceViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticatedEmployee]
 
@@ -331,139 +336,317 @@ class AttendanceViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=['post'], url_path='start-shift')
     def start_shift(self, request):
-        from core.timezone import today_ist, now_ist
-        att, _ = Attendance.objects.get_or_create(emp_id=request.user.emp_id, date=today_ist())
-        if not att.first_login:
-            att.first_login = now_ist()
-            att.status = AttendanceStatus.PRESENT
-            att.save()
+        att = ShiftService(actor=request.user).start_attendance()
         return EnvelopeMixin().ok({'detail': 'Shift started.', 'first_login': att.first_login.isoformat()})
 
     @action(detail=False, methods=['post'], url_path='end-shift')
     def end_shift(self, request):
-        from core.timezone import today_ist, now_ist
-        att = Attendance.objects.filter(emp_id=request.user.emp_id, date=today_ist()).first()
-        if att and not att.last_logout:
-            att.last_logout = now_ist()
-            att.save()
+        ShiftService(actor=request.user).end_attendance()
         return EnvelopeMixin().ok({'detail': 'Shift ended.'})
 
     @action(detail=False, methods=['get'], url_path='admin-report')
     def admin_report(self, request):
         if not request.user.is_supervisor:
             return EnvelopeMixin().error('Unauthorized', status=403)
-        
-        project = request.query_params.get('project')
-        emp_id_filter = request.query_params.get('emp_id')
-        date_from = request.query_params.get('from')
-        date_to = request.query_params.get('to')
 
-        if not project:
-            return EnvelopeMixin().error('Project is required.', status=400)
-            
-        from apps.masters.models import Project
-        
-        # The frontend passes the project name, but authorized projects are IDs
-        proj_obj = Project.objects.filter(project_name__iexact=project).first()
-        proj_id = proj_obj.project_id if proj_obj else project
-        
-        # Verify the supervisor is authorized for this project
-        if not getattr(request.user, 'is_super_admin', False):
-            authorized = request.user.get_authorized_projects()
-            if not authorized or proj_id.lower() not in [p.lower() for p in authorized]:
-                return EnvelopeMixin().error('Unauthorized for this project.', status=403)
+        def parse_date(value):
+            if not value:
+                return None
+            try:
+                return date.fromisoformat(value)
+            except ValueError:
+                return None
 
-        from apps.accounts.models import Employee, LoginHistory
-        from apps.breaks.models import BreakTime
-        from django.db.models import Q, Min, Max, Count
-        from datetime import datetime
-        from core.timezone import now_ist
-        
-        # Find all employees under this project
-        emps = Employee.objects.filter(Q(project__icontains=proj_id))
-        emps = emps.exclude(role='project_admin').exclude(role='super_admin')
-        if emp_id_filter:
-            emps = emps.filter(employee_id__icontains=emp_id_filter)
-            
-        emp_ids = list(emps.values_list('employee_id', flat=True))
-        
-        queryset = LoginHistory.objects.filter(emp_id__in=emp_ids)
-        if date_from:
-            dt_from = datetime.strptime(date_from, '%Y-%m-%d').date()
-            queryset = queryset.filter(date__gte=dt_from)
-        if date_to:
-            dt_to = datetime.strptime(date_to, '%Y-%m-%d').date()
-            queryset = queryset.filter(date__lte=dt_to)
-            
-        # Aggregate login history
-        aggregated = queryset.values('emp_id', 'date').annotate(
-            first_login=Min('login_time'),
-            last_logout=Max('logout_time'),
-            active_sessions=Count('id', filter=Q(logout_time__isnull=True))
-        ).order_by('-date', 'emp_id')
-        
-        # Pre-fetch breaks for these employees in the given date range
-        breaks = BreakTime.objects.filter(user_id__in=emp_ids)
-        if date_from:
-            breaks = breaks.filter(start_time__date__gte=dt_from)
-        if date_to:
-            breaks = breaks.filter(start_time__date__lte=dt_to)
-            
-        # Build dictionary of breaks: (emp_id, date) -> total_break_seconds
-        break_dict = {}
-        for b in breaks:
-            if not b.start_time:
-                continue
-            b_date = b.start_time.date()
-            key = (b.user_id, b_date)
-            
-            duration = 0
-            if b.end_time:
-                duration = (b.end_time - b.start_time).total_seconds()
-            else:
-                duration = (now_ist() - b.start_time).total_seconds()
-                
-            break_dict[key] = break_dict.get(key, 0) + duration
+        date_from = parse_date(request.query_params.get("from"))
+        date_to = parse_date(request.query_params.get("to"))
+        if (request.query_params.get("from") and date_from is None) or (
+            request.query_params.get("to") and date_to is None
+        ):
+            return EnvelopeMixin().error("Dates must use YYYY-MM-DD format.", status=400)
+        if date_from is None and date_to is None:
+            date_from = date_to = today_ist()
+        elif date_from is None:
+            date_from = date_to
+        elif date_to is None:
+            date_to = date_from
+        if date_from > date_to:
+            return EnvelopeMixin().error("The end date must not precede the start date.", status=400)
 
-        # Build a mapping of emp_id to name
-        emp_names = {e.employee_id: e.name for e in emps}
+        projects = list(Project.objects.all())
+        projects_by_key = {}
+        for item in projects:
+            for key in (item.project_id, item.project_name):
+                if key:
+                    projects_by_key[key.strip().casefold()] = item
+
+        project_filter = (request.query_params.get("project") or "").strip()
+        selected_project = projects_by_key.get(project_filter.casefold()) if project_filter else None
+        if project_filter and selected_project is None:
+            return EnvelopeMixin().error("Project not found.", status=400)
+
+        authorized = {
+            value.strip().casefold()
+            for value in request.user.get_authorized_projects()
+            if value.strip() and value != "*"
+        }
+
+        def employee_projects(employee):
+            tokens = [value.strip() for value in (employee.project or "").split("|") if value.strip()]
+            return [
+                (projects_by_key.get(token.casefold()).project_name
+                 if projects_by_key.get(token.casefold()) else token)
+                for token in tokens
+            ]
+
+        def is_authorized(employee):
+            if request.user.is_super_admin:
+                return True
+            for token in (employee.project or "").split("|"):
+                token = token.strip().casefold()
+                project_item = projects_by_key.get(token)
+                if token in authorized or (
+                    project_item
+                    and any(
+                        candidate and candidate.strip().casefold() in authorized
+                        for candidate in (project_item.project_id, project_item.project_name)
+                    )
+                ):
+                    return True
+            return False
+
+        employee_queryset = (
+            Employee.objects.exclude(role__in=("project_admin", "super_admin"))
+            .filter(Q(date_of_joining__isnull=True) | Q(date_of_joining__lte=date_to))
+            .filter(
+                Q(status="active")
+                | Q(status="inactive", active_inactive_date__gte=date_from)
+            )
+        )
+        search = (request.query_params.get("search") or request.query_params.get("emp_id") or "").strip()
+        location_filter = (request.query_params.get("location") or "").strip()
+        if search:
+            employee_queryset = employee_queryset.filter(
+                Q(employee_id__icontains=search) | Q(name__icontains=search)
+            )
+        if location_filter:
+            employee_queryset = employee_queryset.annotate(
+                attendance_location=Trim("department")
+            ).filter(attendance_location__iexact=location_filter)
+        employees = list(employee_queryset.order_by("name", "employee_id"))
+        if selected_project:
+            accepted = {
+                selected_project.project_id.strip().casefold(),
+                selected_project.project_name.strip().casefold(),
+            }
+            employees = [
+                employee for employee in employees
+                if any(
+                    token.strip().casefold() in accepted
+                    for token in (employee.project or "").split("|")
+                    if token.strip()
+                )
+            ]
+            if not request.user.is_super_admin and not any(
+                value in authorized for value in accepted
+            ):
+                return EnvelopeMixin().error("Unauthorized for this project.", status=403)
+        else:
+            employees = [employee for employee in employees if is_authorized(employee)]
+
+        employee_ids = [employee.employee_id for employee in employees]
+        if not employee_ids:
+            return EnvelopeMixin().ok([])
+
+        day_count = (date_to - date_from).days + 1
+        report_days = [date_from + timedelta(days=offset) for offset in range(day_count)]
+        range_start = start_of_day(date_from)
+        range_end = start_of_day(date_to + timedelta(days=1))
+        now = now_ist()
+
+        attendance_by_key = {
+            (row.emp_id, row.date): row
+            for row in Attendance.objects.filter(
+                emp_id__in=employee_ids, date__range=(date_from, date_to)
+            )
+        }
+        login_history = list(
+            LoginHistory.objects.filter(
+                emp_id__in=employee_ids,
+                login_time__gte=range_start,
+                login_time__lt=range_end,
+            ).order_by("login_time", "id")
+        )
+        logins_by_key = {}
+        for login in login_history:
+            local_login = to_ist(login.login_time)
+            if local_login is not None:
+                logins_by_key.setdefault((login.emp_id, local_login.date()), []).append(login)
+
+        breaks = list(
+            BreakTime.objects.filter(
+                user_id__in=employee_ids,
+                start_time__lt=range_end,
+            ).filter(Q(end_time__gt=range_start) | Q(end_time__isnull=True))
+        )
+        breaks_by_employee = {}
+        for item in breaks:
+            breaks_by_employee.setdefault(item.user_id, []).append(item)
+
+        shifts_by_name = {
+            shift.shift_name.strip().casefold(): shift
+            for shift in Shift.objects.filter(is_active=True)
+        }
+
+        def union_intervals(intervals):
+            merged = []
+            for start, end in sorted(intervals):
+                if end <= start:
+                    continue
+                if merged and start <= merged[-1][1]:
+                    merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+                else:
+                    merged.append((start, end))
+            return merged
+
+        def interval_seconds(intervals):
+            return sum((end - start).total_seconds() for start, end in union_intervals(intervals))
 
         data = []
-        for a in aggregated:
-            first_login = a['first_login']
-            last_logout = a['last_logout']
-            emp_id = a['emp_id']
-            row_date = a['date']
-            is_active = a.get('active_sessions', 0) > 0
-            
-            if is_active:
-                last_logout = None
-            
-            total_break_sec = break_dict.get((emp_id, row_date), 0)
-            net_hours = 0.0
-            
-            if first_login:
-                end_time = last_logout
-                if not end_time:
-                    end_time = now_ist()
-                
-                total_sec = (end_time - first_login).total_seconds()
-                net_sec = max(0, total_sec - total_break_sec)
-                net_hours = round(net_sec / 3600.0, 2)
-                
-            data.append({
-                'date': row_date.isoformat() if row_date else None,
-                'emp_id': emp_id,
-                'emp_name': emp_names.get(emp_id, emp_id),
-                'status': 'Currently Logged In' if not last_logout else 'Logged Out',
-                'first_login': first_login.isoformat() if first_login else None,
-                'last_logout': last_logout.isoformat() if last_logout else None,
-                'net_working_hours': net_hours
-            })
-            
-        return EnvelopeMixin().ok(data)
+        employee_by_id = {employee.employee_id: employee for employee in employees}
+        for day in report_days:
+            day_start = start_of_day(day)
+            day_end = start_of_day(day + timedelta(days=1))
+            for emp_id in employee_ids:
+                employee = employee_by_id[emp_id]
+                if employee.date_of_joining and day < employee.date_of_joining:
+                    continue
+                if (
+                    employee.status == "inactive"
+                    and (
+                        employee.active_inactive_date is None
+                        or day > employee.active_inactive_date
+                    )
+                ):
+                    continue
+                attendance = attendance_by_key.get((emp_id, day))
+                sessions = logins_by_key.get((emp_id, day), [])
+                shift = shifts_by_name.get((employee.shift or "").strip().casefold())
+                allowed_end = day_end
+                if shift and shift.is_overnight:
+                    allowed_end = datetime.combine(
+                        day + timedelta(days=1), shift.end_time, tzinfo=IST
+                    )
 
-from apps.tracking.models import SoftwareShift
+                intervals = []
+                logins = []
+                logouts = []
+                is_in_progress = False
+                for session in sessions:
+                    start = to_ist(session.login_time)
+                    if start is None:
+                        continue
+                    logins.append(start)
+                    end = to_ist(session.logout_time)
+                    if end is None:
+                        if day != today_ist():
+                            continue
+                        is_in_progress = True
+                        end = now
+                    elif end <= start:
+                        continue
+                    elif end > allowed_end or end > now:
+                        continue
+                    else:
+                        logouts.append(end)
+                    start = max(start, day_start)
+                    end = min(end, allowed_end, now if day == today_ist() else allowed_end)
+                    if end > start:
+                        intervals.append((start, end))
+
+                if attendance and attendance.first_login:
+                    first = to_ist(attendance.first_login)
+                    if first and not logins:
+                        logins.append(first)
+                        if attendance.last_logout:
+                            last = to_ist(attendance.last_logout)
+                            if last and first < last <= allowed_end and last <= now:
+                                logouts.append(last)
+                                intervals.append((max(first, day_start), last))
+                        elif day == today_ist():
+                            is_in_progress = True
+                            intervals.append((max(first, day_start), min(now, allowed_end)))
+
+                work_intervals = union_intervals(intervals)
+                break_intervals = []
+                for item in breaks_by_employee.get(emp_id, []):
+                    start = max(to_ist(item.start_time), day_start)
+                    end_value = to_ist(item.end_time) if item.end_time else (
+                        now if day == today_ist() else None
+                    )
+                    if end_value is not None:
+                        end = min(end_value, allowed_end, now if day == today_ist() else allowed_end)
+                        if end > start:
+                            break_intervals.append((start, end))
+                merged_breaks = union_intervals(break_intervals)
+                gross_seconds = interval_seconds(work_intervals)
+                break_seconds = sum(
+                    max(0, (min(work_end, break_end) - max(work_start, break_start)).total_seconds())
+                    for work_start, work_end in work_intervals
+                    for break_start, break_end in merged_breaks
+                )
+                net_seconds = max(0, round(gross_seconds - break_seconds))
+
+                first_login = min(logins) if logins else None
+                last_logout = max(logouts) if logouts else None
+                if attendance:
+                    recorded_first = to_ist(attendance.first_login)
+                    recorded_last = to_ist(attendance.last_logout)
+                    if recorded_first and (first_login is None or recorded_first < first_login):
+                        first_login = recorded_first
+                    if recorded_last and recorded_last <= allowed_end and (
+                        last_logout is None or recorded_last > last_logout
+                    ):
+                        last_logout = recorded_last
+                    if attendance.first_login and not attendance.last_logout and day == today_ist():
+                        is_in_progress = True
+                        last_logout = None
+
+                if attendance and attendance.status == AttendanceStatus.LEAVE:
+                    status = "On Leave"
+                    net_seconds = 0
+                    first_login = last_logout = None
+                elif is_in_progress:
+                    status = "In Progress"
+                    last_logout = None
+                elif sessions or (attendance and attendance.first_login):
+                    status = "Present"
+                elif attendance and attendance.status == AttendanceStatus.ABSENT:
+                    status = "Absent"
+                elif attendance and attendance.status == AttendanceStatus.PRESENT:
+                    status = "Present"
+                else:
+                    status = "No Record"
+
+                assigned = employee_projects(employee)
+                if selected_project:
+                    project_name = selected_project.project_name
+                else:
+                    project_name = ", ".join(assigned) or "-"
+                data.append({
+                    "date": day.isoformat(),
+                    "emp_id": emp_id,
+                    "emp_name": employee.name or emp_id,
+                    "location": (employee.department or "").strip() or "-",
+                    "project": project_name,
+                    "status": status,
+                    "first_login": first_login.isoformat() if first_login else None,
+                    "last_logout": last_logout.isoformat() if last_logout else None,
+                    "total_break_time": round(break_seconds),
+                    "net_working_seconds": net_seconds,
+                    "net_working_hours": round(net_seconds / 3600, 2),
+                })
+
+        return EnvelopeMixin().ok(data)
 
 class SoftwareShiftViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticatedEmployee]
@@ -472,13 +655,19 @@ class SoftwareShiftViewSet(viewsets.ViewSet):
     def status(self, request):
         from core.timezone import today_ist
         from apps.tracking.models import SoftwareShift
-        shift = SoftwareShift.objects.filter(emp_id=request.user.emp_id, date=today_ist()).first()
+        today = today_ist()
+        incomplete_summary = self._incomplete_shift_summary(request.user.emp_id, today)
+        shift = SoftwareShift.objects.filter(emp_id=request.user.emp_id, date=today).first()
         
         if not shift:
-            return EnvelopeMixin().ok({'status': 'UNSTARTED'})
+            return EnvelopeMixin().ok({'status': 'UNSTARTED', **incomplete_summary})
             
         if shift.is_ended:
-            return EnvelopeMixin().ok({'status': 'ENDED', 'total_time': shift.total_time})
+            return EnvelopeMixin().ok({
+                'status': 'ENDED',
+                'total_time': shift.total_time,
+                **incomplete_summary,
+            })
             
         from core.timezone import now_ist
         if shift.is_paused:
@@ -492,94 +681,58 @@ class SoftwareShiftViewSet(viewsets.ViewSet):
         return EnvelopeMixin().ok({
             'status': status_str,
             'accumulated_seconds': current_active_seconds,
-            'start_time': shift.start_time.isoformat() if shift.start_time else None
+            'start_time': shift.start_time.isoformat() if shift.start_time else None,
+            **incomplete_summary,
         })
 
     @action(detail=False, methods=['post'], url_path='start-shift')
     def start_shift(self, request):
-        from core.timezone import today_ist, now_ist
-        from apps.tracking.models import SoftwareShift, Attendance, AttendanceStatus
-        now = now_ist()
-        
-        att, _ = Attendance.objects.get_or_create(emp_id=request.user.emp_id, date=today_ist())
-        if not att.first_login:
-            att.first_login = now
-            att.status = AttendanceStatus.PRESENT
-            att.save()
-            
-        shift, created = SoftwareShift.objects.get_or_create(
-            emp_id=request.user.emp_id, date=today_ist(),
-            defaults={'start_time': now, 'updated_at': now, 'accumulated_seconds': 0}
-        )
-        if not created and shift.is_ended:
+        shift = ShiftService(actor=request.user).start_software_shift()
+        if shift.is_ended:
             return EnvelopeMixin().error('Shift already ended for today.')
             
         return EnvelopeMixin().ok({'detail': 'Shift started.'})
 
     @action(detail=False, methods=['post'], url_path='pause')
     def pause(self, request):
-        from core.timezone import today_ist, now_ist
-        from apps.tracking.models import SoftwareShift
-        shift = SoftwareShift.objects.filter(emp_id=request.user.emp_id, date=today_ist()).first()
-        
-        if not shift or shift.is_ended or shift.is_paused:
+        if not ShiftService(actor=request.user).pause_software_shift():
             return EnvelopeMixin().ok({'detail': 'Already paused or ended.'})
-            
-        now = now_ist()
-        shift.accumulated_seconds += (now - shift.updated_at).total_seconds()
-        shift.is_paused = True
-        shift.pause_start = now
-        shift.updated_at = now
-        shift.save()
         return EnvelopeMixin().ok({'detail': 'Paused.'})
 
     @action(detail=False, methods=['post'], url_path='resume')
     def resume(self, request):
-        from core.timezone import today_ist, now_ist
-        from apps.tracking.models import SoftwareShift
-        shift = SoftwareShift.objects.filter(emp_id=request.user.emp_id, date=today_ist()).first()
-        
-        if not shift or shift.is_ended or not shift.is_paused:
+        if not ShiftService(actor=request.user).resume_software_shift():
             return EnvelopeMixin().ok({'detail': 'Already running or ended.'})
-            
-        now = now_ist()
-        shift.is_paused = False
-        shift.pause_start = None
-        shift.updated_at = now
-        shift.save()
         return EnvelopeMixin().ok({'detail': 'Resumed.'})
 
     @action(detail=False, methods=['post'], url_path='end-shift')
     def end_shift(self, request):
-        from core.timezone import today_ist, now_ist
-        from apps.tracking.models import SoftwareShift, Attendance
-        now = now_ist()
-        
-        shift = SoftwareShift.objects.filter(emp_id=request.user.emp_id, date=today_ist()).first()
-        if not shift or shift.is_ended:
+        if not ShiftService(actor=request.user).end_software_shift():
             return EnvelopeMixin().ok({'detail': 'Already ended.'})
-            
-        if not shift.is_paused:
-            shift.accumulated_seconds += (now - shift.updated_at).total_seconds()
-            
-        shift.is_paused = False
-        shift.is_ended = True
-        shift.end_time = now
-        shift.updated_at = now
-        
-        total_sec = shift.accumulated_seconds
-        hrs = int(total_sec // 3600)
-        mins = int((total_sec % 3600) // 60)
-        secs = int(total_sec % 60)
-        shift.total_time = f"{hrs:02d}:{mins:02d}:{secs:02d}"
-        shift.save()
-        
-        att = Attendance.objects.filter(emp_id=request.user.emp_id, date=today_ist()).first()
-        if att:
-            att.last_logout = now
-            att.save()
-            
         return EnvelopeMixin().ok({'detail': 'Shift ended.'})
+
+    @staticmethod
+    def _incomplete_shift_summary(emp_id, today):
+        queryset = SoftwareShift.objects.filter(
+            emp_id=emp_id,
+            date__lt=today,
+            is_ended=False,
+        ).order_by("-date")
+        count = queryset.count()
+        shifts = queryset.values("id", "date", "start_time")[:20]
+        return {
+            "incomplete_shift_count": count,
+            "incomplete_shifts": [
+                {
+                    "id": shift["id"],
+                    "date": shift["date"].isoformat(),
+                    "start_time": shift["start_time"].isoformat()
+                    if shift["start_time"]
+                    else None,
+                }
+                for shift in shifts
+            ],
+        }
         
     def list(self, request):
         if not request.user.is_supervisor:
@@ -629,7 +782,12 @@ class SoftwareShiftViewSet(viewsets.ViewSet):
                 'work_location': emp.department,
                 'is_paused': False,
                 'type': 'software_shift',
-                'status': 'Present'
+                'status': 'Present',
+                'recovery_status': (
+                    'needs_review'
+                    if shift.date < today_ist() and not shift.is_ended
+                    else None
+                ),
             })
             
         from apps.masters.models import Project
@@ -676,9 +834,6 @@ class SoftwareShiftViewSet(viewsets.ViewSet):
             })
             
         return EnvelopeMixin().ok(data)
-
-from django.db import connection
-from django.http import HttpResponse
 
 def run_migrations(request):
     sql = """

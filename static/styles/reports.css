@@ -604,6 +604,112 @@
     white-space: nowrap;
 }
 
+.attendance-section .reports-filter-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+}
+
+.attendance-table-container {
+    max-height: min(65vh, 680px);
+    overflow: auto;
+    overscroll-behavior: contain;
+}
+
+.attendance-report-table {
+    width: max-content;
+    min-width: 100%;
+    table-layout: auto;
+}
+
+.attendance-report-table th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    min-width: 110px;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    vertical-align: middle;
+}
+
+.attendance-report-table td {
+    min-width: 110px;
+}
+
+.attendance-report-table th:nth-child(1),
+.attendance-report-table td:nth-child(1) {
+    position: sticky;
+    left: 0;
+    width: 64px;
+    min-width: 64px;
+    z-index: 3;
+    background: #2c3e50;
+    color: #fff;
+}
+
+.attendance-report-table td:nth-child(1) {
+    background: #fff;
+    color: inherit;
+}
+
+.attendance-report-table th:nth-child(2),
+.attendance-report-table td:nth-child(2) {
+    position: sticky;
+    left: 64px;
+    width: 118px;
+    min-width: 118px;
+    z-index: 3;
+    background: #2c3e50;
+    color: #fff;
+}
+
+.attendance-report-table td:nth-child(2) {
+    background: #fff;
+    color: inherit;
+}
+
+.attendance-report-table th:nth-child(3),
+.attendance-report-table td:nth-child(3) {
+    position: sticky;
+    left: 182px;
+    width: 110px;
+    min-width: 110px;
+    z-index: 3;
+    background: #2c3e50;
+    color: #fff;
+}
+
+.attendance-report-table td:nth-child(3) {
+    background: #fff;
+    color: inherit;
+}
+
+.attendance-report-table th:nth-child(4),
+.attendance-report-table td:nth-child(4) {
+    position: sticky;
+    left: 292px;
+    width: 190px;
+    min-width: 190px;
+    z-index: 3;
+    background: #2c3e50;
+    color: #fff;
+}
+
+.attendance-report-table td:nth-child(4) {
+    background: #fff;
+    color: inherit;
+}
+
+.attendance-report-table tbody tr:nth-child(even) td:nth-child(-n+4) {
+    background: #f8f9fa;
+}
+
+.attendance-report-table thead th:nth-child(-n+4) {
+    z-index: 4;
+}
+
 /* Download and Refresh Buttons */
 .download-container {
     display: flex;
@@ -1766,4 +1872,3 @@
   min-width: 40px;
   text-align: right;
 }
-

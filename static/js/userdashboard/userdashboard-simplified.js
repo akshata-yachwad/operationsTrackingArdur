@@ -109,11 +109,36 @@ $(document).ready(function() {
         }
     }
 
-    function syncStatusFromServer() {
-        $.get('/api/v1/tracking/software-shifts/status/', function(res) {
+    function showShiftRecoveryNotice(messages) {
+        const notice = document.getElementById('shift-recovery-notice');
+        if (!notice) return;
+        notice.textContent = messages.join(' ');
+        notice.hidden = messages.length === 0;
+    }
+
+    function shiftRecoveryMessages(data) {
+        const messages = [];
+        if (data.incomplete_shift_count) {
+            const dates = (data.incomplete_shifts || []).map(shift => shift.date).join(', ');
+            const overflow = data.incomplete_shift_count > (data.incomplete_shifts || []).length;
+            messages.push(
+                `${data.incomplete_shift_count} previous shift(s) need supervisor review${dates ? ` (${dates}${overflow ? ', and older dates' : ''})` : ''}. No timestamps or saved durations have been changed. Contact your supervisor to request review.`
+            );
+        }
+        if (data.status === 'RUNNING') {
+            messages.push(
+                "The server reports today's shift is still running. If a previous tab was closed or disconnected, its pause may not have reached the server. No recovery time has been inferred; contact your supervisor if this status is unexpected."
+            );
+        }
+        return messages;
+    }
+
+    function syncStatusFromServer({ allowAutoResume = true } = {}) {
+        return $.get('/api/v1/tracking/software-shifts/status/').done(function(res) {
             let data = res.data || res;
             shiftStatus = data.status || 'UNSTARTED';
             accumulatedSeconds = data.accumulated_seconds || 0;
+            showShiftRecoveryNotice(shiftRecoveryMessages(data));
             
             clearInterval(shiftTimerInterval);
             
@@ -127,10 +152,16 @@ $(document).ready(function() {
                 $('#btn-end-shift').show();
             } else if (shiftStatus === 'PAUSED') {
                 const currentCsrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] || 'true';
-                if (sessionStorage.getItem('softwareShiftRunning') === currentCsrf) {
+                if (
+                    allowAutoResume &&
+                    sessionStorage.getItem('softwareShiftRunning') === currentCsrf
+                ) {
                     // Auto-resume if it was running before this refresh (within same login session)
                     resumeShift();
                     return;
+                }
+                if (!allowAutoResume) {
+                    sessionStorage.removeItem('softwareShiftRunning');
                 }
                 $('#btn-start-shift').hide();
                 $('#btn-resume-shift').show();
@@ -152,8 +183,15 @@ $(document).ready(function() {
             if (shiftStatus !== 'ENDED') {
                 updateShiftTimerDisplay();
             }
+        }).fail(function() {
+            showShiftRecoveryNotice([
+                'Could not verify the server shift status. No saved timestamps or durations were changed; refresh and try again.'
+            ]);
         });
     }
+    window.addEventListener('software-shift-status-refresh', function() {
+        syncStatusFromServer({ allowAutoResume: false });
+    });
 
     // Check current shift status on load
     syncStatusFromServer();
@@ -182,6 +220,23 @@ $(document).ready(function() {
         $.post('/api/v1/tracking/software-shifts/end-shift/', function(res) {
             syncStatusFromServer();
             loadAttendance();
+        }).fail(function() {
+            syncStatusFromServer({ allowAutoResume: false }).done(function(res) {
+                const data = res.data || res;
+                if (data.status !== 'ENDED') {
+                    const messages = shiftRecoveryMessages(data);
+                    messages.push(
+                        'End Shift could not be confirmed. The server status was refreshed; retry or contact your supervisor if the shift remains open.'
+                    );
+                    showShiftRecoveryNotice(messages);
+                } else {
+                    loadAttendance();
+                }
+            }).fail(function() {
+                showShiftRecoveryNotice([
+                    'End Shift and the follow-up status check could not be confirmed. Saved values were not locally changed; refresh before retrying.'
+                ]);
+            });
         });
     });
 

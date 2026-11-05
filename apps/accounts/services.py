@@ -29,6 +29,7 @@ logger = logging.getLogger("opstracking.auth")
 class AuthService(BaseService):
     """Login, logout, password changes."""
 
+    @transaction.atomic
     def login(self, request, emp_id: str, password: str) -> User:
         user = authenticate(request, username=emp_id, password=password)
 
@@ -38,6 +39,7 @@ class AuthService(BaseService):
             logger.warning("failed login for %r from %s", emp_id, _client_ip(request))
             raise AuthenticationError("Incorrect employee ID or password.")
 
+        user = User.objects.select_for_update().get(pk=user.pk)
         if not user.is_active:
             raise AuthenticationError("This account has been deactivated. Contact your supervisor.")
 
@@ -64,6 +66,7 @@ class AuthService(BaseService):
         transaction.on_commit(lambda: self._announce_online(user.emp_id))
         return user
 
+    @transaction.atomic
     def logout(self, request) -> None:
         user = request.user
         if not user.is_authenticated:
@@ -72,10 +75,15 @@ class AuthService(BaseService):
         emp_id = user.emp_id
         session_key = request.session.session_key
 
-        LoginHistory.objects.filter(emp_id=emp_id, logout_time__isnull=True).update(
-            logout_time=now_ist()
-        )
-        User.objects.filter(pk=user.pk).update(session_id=None)
+        if session_key:
+            LoginHistory.objects.filter(
+                emp_id=emp_id,
+                session_key=session_key,
+                logout_time__isnull=True,
+            ).update(logout_time=now_ist())
+            User.objects.filter(pk=user.pk, session_id=session_key).update(session_id=None)
+        else:
+            logger.warning("authenticated logout has no session key for %s", emp_id)
 
         # Deletes the django_session row. A replayed cookie now resolves to
         # nothing and the next request is anonymous.
@@ -87,36 +95,39 @@ class AuthService(BaseService):
         # Invalidating the HTTP session does NOT close an already-open
         # WebSocket — it authenticated once, at handshake. Without this, a
         # signed-out user keeps receiving pushes.
-        self._revoke_sockets(emp_id, session_key)
+        transaction.on_commit(lambda: self._revoke_sockets(emp_id, session_key))
 
     def force_logout(self, emp_id: str) -> None:
         """Administrative force logout for a stuck or unattended session."""
         self.require_admin("Only an administrator can force logout an employee.")
-        
-        user = self.require_found(
-            User.objects.filter(emp_id=emp_id).first(),
-            f"No login exists for employee {emp_id}.",
-        )
-        
-        session_key = user.session_id
-        
-        # Close open login history
-        LoginHistory.objects.filter(emp_id=emp_id, logout_time__isnull=True).update(
-            logout_time=now_ist()
-        )
-        
-        # Clear their session
-        User.objects.filter(pk=user.pk).update(session_id=None)
-        
-        if session_key:
-            try:
+
+        with transaction.atomic():
+            user = self.require_found(
+                User.objects.select_for_update().filter(emp_id=emp_id).first(),
+                f"No login exists for employee {emp_id}.",
+            )
+
+            session_keys = set(
+                LoginHistory.objects.filter(emp_id=emp_id)
+                .exclude(session_key="")
+                .values_list("session_key", flat=True)
+                .distinct()
+            )
+            if user.session_id:
+                session_keys.add(user.session_id)
+
+            LoginHistory.objects.filter(emp_id=emp_id, logout_time__isnull=True).update(
+                logout_time=now_ist()
+            )
+            User.objects.filter(pk=user.pk).update(session_id=None)
+
+            if session_keys:
                 from django.contrib.sessions.models import Session
-                Session.objects.filter(session_key=session_key).delete()
-            except Exception:
-                pass
-                
-        self.log("force_logout", target=emp_id)
-        self._revoke_sockets(emp_id, session_key)
+
+                Session.objects.filter(session_key__in=session_keys).delete()
+
+            self.log("force_logout", target=emp_id)
+            transaction.on_commit(lambda: self._revoke_sockets(emp_id, None))
         
         try:
             from apps.presence.services import PresenceService

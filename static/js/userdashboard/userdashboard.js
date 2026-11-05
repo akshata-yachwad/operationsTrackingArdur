@@ -32,34 +32,49 @@ document.addEventListener("DOMContentLoaded", function () {
     });
 
     // Handle confirm logout
-    confirmLogout.addEventListener('click', () => {
-        sessionStorage.removeItem('softwareShiftRunning');
-        
-        // Pause software shift if running before destroying the session
-        fetch('/api/v1/tracking/software-shifts/pause/', {
-            method: 'POST',
-            headers: {
-                'X-CSRFToken': (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || document.querySelector('[name=csrfmiddlewaretoken]')?.value || ''
+    confirmLogout.addEventListener('click', async () => {
+        const csrfToken = (document.cookie.match(/csrftoken=([^;]+)/) || [])[1]
+            || document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
+        confirmLogout.disabled = true;
+
+        try {
+            const pauseResponse = await fetch('/api/v1/tracking/software-shifts/pause/', {
+                method: 'POST',
+                headers: { 'X-CSRFToken': csrfToken }
+            });
+            if (!pauseResponse.ok) {
+                throw new Error(`Shift pause returned ${pauseResponse.status}.`);
             }
-        }).finally(() => {
-            fetch('/api/v1/auth/logout/', {
+        } catch (error) {
+            console.error('Could not confirm shift pause before logout:', error);
+            sessionStorage.removeItem('softwareShiftRunning');
+            window.dispatchEvent(new Event('software-shift-status-refresh'));
+            alert('The shift pause could not be confirmed. You are still signed in; check the shift status and try logging out again. If this tab was closed or disconnected, the incomplete shift will be flagged for supervisor review.');
+            confirmLogout.disabled = false;
+            return;
+        }
+
+        sessionStorage.removeItem('softwareShiftRunning');
+        window.dispatchEvent(new Event('software-shift-status-refresh'));
+        try {
+            const logoutResponse = await fetch('/api/v1/auth/logout/', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-CSRFToken': (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || document.querySelector('[name=csrfmiddlewaretoken]')?.value || ''
+                    'X-CSRFToken': csrfToken
                 }
-            })
-            .then(response => {
-                if (response.ok) {
-                    window.location.href = '/login/'; // Redirect to login page
-                } else {
-                    alert('Error logging out. Please try again.');
-                }
-            })
-            .catch(error => {
-                console.error('Error:', error);
             });
-        });
+            if (logoutResponse.ok || logoutResponse.status === 403) {
+                window.location.href = '/login/';
+                return;
+            }
+            throw new Error(`Logout returned ${logoutResponse.status}.`);
+        } catch (error) {
+            console.error('Could not confirm logout:', error);
+            alert('Logout could not be confirmed. Refresh the page to check your session and shift status.');
+        } finally {
+            confirmLogout.disabled = false;
+        }
     });
 
     // Close popup when cancel is clicked
@@ -370,6 +385,3 @@ function showContent(contentId) {
         }
     }
 }
-
-
-

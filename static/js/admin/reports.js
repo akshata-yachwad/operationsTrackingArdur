@@ -809,6 +809,9 @@ $(document).ready(function () {
             {
                 data: null,
                 render: function (data) {
+                    if (data.recovery_status === 'needs_review') {
+                        return `${data.status || 'Present'} - Needs Review`;
+                    }
                     if (data.status) {
                         return data.status;
                     }
@@ -924,6 +927,9 @@ $(document).ready(function () {
         if (key === 'project_name') return row.project_name || row.project || '';
         if (key === 'total_time') return formatTime(row.total_time);
         if (key === 'status') {
+            if (row.recovery_status === 'needs_review') {
+                return `${row.status || 'Present'} - Needs Review`;
+            }
             if (row.status) return row.status;
             if (row.is_paused) return `Paused${row.pause_reason ? ` (${row.pause_reason})` : ''}`;
             return row.end_time ? 'Completed' : 'In Progress';
@@ -1194,7 +1200,8 @@ $(document).ready(function () {
                     work_location: item.work_location || "",
                     is_paused: item.is_paused || false,
                     type: item.type || 'software_shift',
-                    status: item.status
+                    status: item.status,
+                    recovery_status: item.recovery_status
                 };
             }) : [];
 
@@ -1672,95 +1679,160 @@ $(document).ready(function () {
         e.stopPropagation();
     });
 
+    function attendanceTodayInIST() {
+        const parts = new Intl.DateTimeFormat('en-CA', {
+            timeZone: 'Asia/Kolkata',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit'
+        }).formatToParts(new Date());
+        const dateParts = Object.fromEntries(parts.map(part => [part.type, part.value]));
+        return `${dateParts.year}-${dateParts.month}-${dateParts.day}`;
+    }
+
+    $('#attStartDate, #attEndDate').val(attendanceTodayInIST());
+
+    let attendanceFiltersPromise;
+    let attendanceSearchTimer;
+    let attendanceReportRequest;
+
     $('.attendance-btn').click(function() {
         sessionStorage.setItem('activeReportTab', 'attendance');
         $('.reports-toggle-btn span').removeClass('active');
         $(this).addClass('active');
         $('.summary-section, .reports-section, .graphs-section').hide();
         $('#attendanceSection').show();
-        loadAttendanceProjects();
-        loadAttendanceReport();
+        loadAttendanceFilters().done(loadAttendanceReport);
     });
 
-    function loadAttendanceProjects() {
-        if ($('#attProjectFilter option').length > 1) return; 
-        
-        $.get('/api/v1/masters/projects/', function(res) {
-            let projects = res.data || res;
-            $('#attProjectFilter').empty().append('<option value="">Select Project</option>');
-            projects.forEach(p => {
-                $('#attProjectFilter').append('<option value="' + p.project_name + '">' + p.project_name + '</option>');
+    function loadAttendanceFilters() {
+        if (attendanceFiltersPromise) return attendanceFiltersPromise;
+        const projectsRequest = $.get('/api/v1/masters/projects/', { active: 'true' });
+        const locationsRequest = $.get('/api/v1/auth/employees/locations/');
+        attendanceFiltersPromise = $.when(projectsRequest, locationsRequest)
+            .done(function(projectResult, locationResult) {
+                const projectsResponse = projectsRequest.responseJSON || projectResult[0];
+                const locationsResponse = locationsRequest.responseJSON || locationResult[0];
+                const projects = projectsResponse.data || projectsResponse;
+                const locations = locationsResponse.data || locationsResponse;
+
+                const projectFilter = $('#attProjectFilter').empty();
+                projectFilter.append($('<option>', { value: '', text: 'All Projects' }));
+                projects.forEach(function(project) {
+                    projectFilter.append($('<option>', {
+                        value: project.project_id || project.project_name,
+                        text: project.project_name
+                    }));
+                });
+
+                const locationFilter = $('#attLocationFilter').empty();
+                locationFilter.append($('<option>', { value: '', text: 'All Locations' }));
+                locations.forEach(function(location) {
+                    locationFilter.append($('<option>', { value: location, text: location }));
+                });
+            })
+            .fail(function() {
+                attendanceFiltersPromise = null;
+                $('#attendanceReportTable tbody').html(
+                    '<tr><td colspan="10" class="text-center text-danger">Unable to load attendance filters.</td></tr>'
+                );
             });
-        });
+        return attendanceFiltersPromise;
     }
 
     function loadAttendanceReport() {
-        const project = $('#attProjectFilter').val();
-        if (!project) {
-            $('#attendanceReportTable tbody').html('<tr><td colspan="7" class="text-center">Please select a project to view attendance.</td></tr>');
-            return;
+        if (attendanceReportRequest) {
+            attendanceReportRequest.abort();
+            attendanceReportRequest = null;
         }
-
+        const project = $('#attProjectFilter').val();
+        const location = $('#attLocationFilter').val();
         const fromDate = $('#attStartDate').val();
         const toDate = $('#attEndDate').val();
-        const empIdFilter = $('#attEmpIdFilter').val().trim();
+        const search = $('#attEmpIdFilter').val().trim();
+
+        if (!fromDate || !toDate) {
+            $('#attendanceReportTable tbody').html(
+                '<tr><td colspan="10" class="text-center">Select a valid date range.</td></tr>'
+            );
+            return;
+        }
         
-        $('#attendanceReportTable tbody').html('<tr><td colspan="7" class="text-center"><i class="fas fa-spinner fa-spin"></i> Loading...</td></tr>');
+        $('#attendanceReportTable tbody').html(
+            '<tr><td colspan="10" class="text-center"><i class="fas fa-spinner fa-spin"></i> Loading...</td></tr>'
+        );
         
-        $.ajax({
+        attendanceReportRequest = $.ajax({
             url: '/api/v1/tracking/attendance/admin-report/',
-            data: { project: project, from: fromDate, to: toDate, emp_id: empIdFilter },
+            data: { project: project, location: location, from: fromDate, to: toDate, search: search },
             success: function(res) {
                 const data = res.data || res;
                 const tbody = $('#attendanceReportTable tbody');
                 tbody.empty();
                 
                 if (!data || data.length === 0) {
-                    tbody.html('<tr><td colspan="7" class="text-center">No attendance records found.</td></tr>');
+                    tbody.html('<tr><td colspan="10" class="text-center">No attendance records found.</td></tr>');
                     return;
                 }
                 
                 data.forEach(function(row, index) {
-                    let firstLogin = row.first_login ? new Date(row.first_login).toLocaleTimeString() : '-';
-                    let lastLogout = row.last_logout ? new Date(row.last_logout).toLocaleTimeString() : '-';
-                    
-                    let netTimeStr = '-';
-                    if (row.first_login) {
-                        let end = row.last_logout ? new Date(row.last_logout) : new Date();
-                        let start = new Date(row.first_login);
-                        let diffSec = Math.max(0, ((end - start) / 1000) - (row.total_break_time || 0));
-                        let hrs = Math.floor(diffSec / 3600);
-                        let mins = Math.floor((diffSec % 3600) / 60);
-                        netTimeStr = hrs + 'h ' + mins + 'm';
-                    }
-
-                    tbody.append(`
-                        <tr>
-                            <td>${index + 1}</td>
-                            <td>${row.date}</td>
-                            <td>${row.emp_id}</td>
-                            <td>${row.emp_name}</td>
-                            <td><span style="text-transform: capitalize;">${row.status}</span></td>
-                            <td>${firstLogin}</td>
-                            <td>${lastLogout}</td>
-                            <td>${netTimeStr}</td>
-                        </tr>
-                    `);
+                    const firstLogin = formatAttendanceTime(row.first_login);
+                    const lastLogout = formatAttendanceTime(row.last_logout);
+                    const totalMinutes = Math.floor((row.net_working_seconds || 0) / 60);
+                    const netTime = `${Math.floor(totalMinutes / 60)}h ${totalMinutes % 60}m`;
+                    const cells = [
+                        index + 1,
+                        row.date || '-',
+                        row.emp_id || '-',
+                        row.emp_name || '-',
+                        row.location || '-',
+                        row.project || '-',
+                        row.status || 'No Record',
+                        firstLogin,
+                        lastLogout,
+                        netTime
+                    ];
+                    const tableRow = $('<tr>');
+                    cells.forEach(value => tableRow.append($('<td>').text(value)));
+                    tbody.append(tableRow);
                 });
             },
-            error: function(err) {
-                $('#attendanceReportTable tbody').html('<tr><td colspan="7" class="text-center text-danger">Error loading data.</td></tr>');
+            error: function(xhr) {
+                if (xhr.statusText === 'abort') return;
+                const message = xhr.responseJSON && xhr.responseJSON.error
+                    ? xhr.responseJSON.error
+                    : 'Error loading attendance data.';
+                $('#attendanceReportTable tbody').html(
+                    $('<tr>').append($('<td>', { colspan: 10, class: 'text-center text-danger' }).text(message))
+                );
             }
         });
     }
 
+    function formatAttendanceTime(value) {
+        if (!value) return '-';
+        const parsed = new Date(value);
+        if (Number.isNaN(parsed.getTime())) return '-';
+        return new Intl.DateTimeFormat('en-IN', {
+            timeZone: 'Asia/Kolkata',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true
+        }).format(parsed);
+    }
+
     $('#refreshAttendanceButton').click(loadAttendanceReport);
     
-    // Trigger on enter in Emp ID search
+    // Debounce server-side search so typing does not issue one request per key.
     $('#attEmpIdFilter').on('keypress', function(e) {
         if(e.which == 13) {
+            clearTimeout(attendanceSearchTimer);
             loadAttendanceReport();
         }
+    });
+    $('#attEmpIdFilter').on('input', function() {
+        clearTimeout(attendanceSearchTimer);
+        attendanceSearchTimer = setTimeout(loadAttendanceReport, 300);
     });
 
     $('#exportAttendanceButton').click(function() {
@@ -1787,5 +1859,5 @@ $(document).ready(function () {
         document.body.removeChild(link);
     });
 
-    $('#attProjectFilter, #attStartDate, #attEndDate').change(loadAttendanceReport);
+    $('#attProjectFilter, #attLocationFilter, #attStartDate, #attEndDate').change(loadAttendanceReport);
 });
