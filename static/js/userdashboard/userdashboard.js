@@ -10,6 +10,22 @@ document.addEventListener("DOMContentLoaded", function () {
     const resetCancel = document.getElementById('reset-cancel');
     const confirmLogout = document.getElementById('confirm-logout');
     const cancelLogout = document.getElementById('cancel-logout');
+    const clearResetForm = () => {
+        if (!resetForm) return;
+        resetForm.reset();
+        resetForm.querySelectorAll('.password-field input').forEach(input => {
+            input.type = 'password';
+        });
+        resetForm.querySelectorAll('.password-toggle').forEach(button => {
+            button.setAttribute('aria-pressed', 'false');
+            button.setAttribute('aria-label', 'Show password');
+            const icon = button.querySelector('i');
+            if (icon) {
+                icon.classList.add('fa-eye');
+                icon.classList.remove('fa-eye-slash');
+            }
+        });
+    };
 
 
     // Show popup when logout button is clicked
@@ -94,6 +110,7 @@ document.addEventListener("DOMContentLoaded", function () {
         openResetLink.addEventListener('click', (e) => {
             e.preventDefault();
             userMenu.classList.add('hidden');
+            clearResetForm();
             resetPopup.classList.remove('hidden');
         });
     }
@@ -108,13 +125,13 @@ document.addEventListener("DOMContentLoaded", function () {
     if (closeReset) {
         closeReset.addEventListener('click', () => {
             resetPopup.classList.add('hidden');
-            if (resetForm) resetForm.reset();
+            clearResetForm();
         });
     }
     if (resetCancel) {
         resetCancel.addEventListener('click', () => {
             resetPopup.classList.add('hidden');
-            if (resetForm) resetForm.reset();
+            clearResetForm();
         });
     }
     let isSubmitting = false;
@@ -130,6 +147,7 @@ document.addEventListener("DOMContentLoaded", function () {
                     const isPassword = input.type === 'password';
                     input.type = isPassword ? 'text' : 'password';
                     btn.setAttribute('aria-pressed', String(isPassword));
+                    btn.setAttribute('aria-label', isPassword ? 'Hide password' : 'Show password');
                     const icon = btn.querySelector('i');
                     if (icon) {
                         icon.classList.toggle('fa-eye', !isPassword);
@@ -142,15 +160,15 @@ document.addEventListener("DOMContentLoaded", function () {
         resetForm.addEventListener('submit', function(e) {
             e.preventDefault();
             if (isSubmitting) return;
-            const oldPassword = document.getElementById('old-password').value.trim();
-            const newPassword = document.getElementById('new-password').value.trim();
-            const confirmPassword = document.getElementById('confirm-password').value.trim();
+            const oldPassword = document.getElementById('old-password').value;
+            const newPassword = document.getElementById('new-password').value;
+            const confirmPassword = document.getElementById('confirm-password').value;
             if (!oldPassword || !newPassword || !confirmPassword) {
                 alert('Please fill all fields');
                 return;
             }
-            if (newPassword.length < 6) {
-                alert('New password must be at least 6 characters');
+            if (newPassword.length < 8) {
+                alert('New password must be at least 8 characters');
                 return;
             }
             if (newPassword !== confirmPassword) {
@@ -162,28 +180,30 @@ document.addEventListener("DOMContentLoaded", function () {
             submitBtn.disabled = true;
             submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Updating...';
             isSubmitting = true;
-            fetch('/reset_password', {
+            fetch('/api/v1/auth/password/change/', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'X-CSRFToken': (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || document.querySelector('[name=csrfmiddlewaretoken]')?.value || ''
                 },
-                body: JSON.stringify({ old_password: oldPassword, new_password: newPassword })
+                body: JSON.stringify({
+                    current_password: oldPassword,
+                    new_password: newPassword,
+                    confirm_password: confirmPassword
+                })
             })
-            .then(r => r.json())
-            .then(data => {
-                if (data.success) {
-                    alert('Password updated successfully');
-                    resetForm.reset();
-                    resetPopup.classList.add('hidden');
-                } else {
-                    alert(data.error || 'Failed to update password');
+            .then(async response => {
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok || data.ok !== true) {
+                    alert(data.error?.message || 'Unable to update password. Check your current password and try again.');
+                    return;
                 }
+                alert('Password updated. Please sign in again.');
+                clearResetForm();
+                resetPopup.classList.add('hidden');
+                window.location.assign('/login/');
             })
-            .catch(err => {
-                console.error('Error updating password:', err);
-                alert('Error updating password');
-            })
+            .catch(() => alert('Unable to update password. Please try again.'))
             .finally(() => {
                 isSubmitting = false;
                 submitBtn.disabled = false;

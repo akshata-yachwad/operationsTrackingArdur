@@ -135,52 +135,41 @@
         </div>
     </div>
 
-    <!-- Reset Password Modal -->
-    <div id="resetPasswordModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2>Reset Password</h2>
-                <button class="close-btn" onclick="$('#resetPasswordModal').fadeOut(300)" aria-label="Close">
-                    <i class="fas fa-times"></i>
-                </button>
-            </div>
-            <div class="modal-body">
-                <div class="modal-message"></div>
-                <div class="modal-actions">
-                    <button class="btn-secondary" onclick="$('#resetPasswordModal').fadeOut(300)">
-                        Cancel
-                    </button>
-                    <button class="btn-danger" id="confirmResetPasswordBtn">
-                        Reset Password
-                    </button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Change Password Modal -->
+    <!-- Admin password reset uses a password chosen and shared by the administrator. -->
     <div id="changePasswordModal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
-                <h2>Change Password</h2>
-                <button class="close-btn" onclick="$('#changePasswordModal').fadeOut(300)" aria-label="Close">
+                <h2 id="adminPasswordTitle">Set Password</h2>
+                <button class="close-btn" onclick="closeAdminPasswordModal()" aria-label="Close">
                     <i class="fas fa-times"></i>
                 </button>
             </div>
             <div class="modal-body">
                 <div class="modal-message" style="margin-bottom: 15px;"></div>
-                <div class="form-group" style="margin-bottom: 20px;">
-                    <label for="newPasswordInput">New Password</label>
-                    <input type="text" id="newPasswordInput" class="form-control" placeholder="Enter new password">
-                </div>
-                <div class="modal-actions">
-                    <button class="btn-secondary" onclick="$('#changePasswordModal').fadeOut(300)">
-                        Cancel
-                    </button>
-                    <button class="btn-primary" id="confirmChangePasswordBtn">
-                        Change Password
-                    </button>
-                </div>
+                <form id="adminPasswordForm">
+                    <div class="form-group" style="margin-bottom: 20px;">
+                        <label for="newPasswordInput">New Password</label>
+                        <div class="password-field">
+                            <input type="password" id="newPasswordInput" class="form-control" required minlength="8" maxlength="128" autocomplete="new-password">
+                            <button type="button" class="password-toggle" data-password-target="newPasswordInput" aria-label="Show password" aria-pressed="false">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-bottom: 20px;">
+                        <label for="confirmPasswordInput">Confirm Password</label>
+                        <div class="password-field">
+                            <input type="password" id="confirmPasswordInput" class="form-control" required minlength="8" maxlength="128" autocomplete="new-password">
+                            <button type="button" class="password-toggle" data-password-target="confirmPasswordInput" aria-label="Show password" aria-pressed="false">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="modal-actions">
+                        <button type="button" class="btn-secondary" onclick="closeAdminPasswordModal()">Cancel</button>
+                        <button type="submit" class="btn-primary" id="confirmChangePasswordBtn">Set Password</button>
+                    </div>
+                </form>
             </div>
         </div>
     </div>

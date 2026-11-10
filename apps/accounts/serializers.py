@@ -158,8 +158,12 @@ class EmployeeWriteSerializer(serializers.ModelSerializer):
 
 class PasswordChangeSerializer(serializers.Serializer):
     current_password = serializers.CharField(write_only=True, trim_whitespace=False)
-    new_password = serializers.CharField(write_only=True, trim_whitespace=False)
-    confirm_password = serializers.CharField(write_only=True, trim_whitespace=False)
+    new_password = serializers.CharField(
+        write_only=True, trim_whitespace=False, max_length=128
+    )
+    confirm_password = serializers.CharField(
+        write_only=True, trim_whitespace=False, max_length=128
+    )
 
     def validate(self, attrs):
         if attrs["new_password"] != attrs["confirm_password"]:
@@ -176,14 +180,27 @@ class PasswordChangeSerializer(serializers.Serializer):
 
 class PasswordResetSerializer(serializers.Serializer):
     """Admin-driven reset. There is no email round-trip: an ops floor
-    supervisor resets a password in person."""
+    administrator sets a password for the employee to receive
+    securely in person."""
 
     emp_id = serializers.CharField(max_length=20, validators=[validate_emp_id])
-    new_password = serializers.CharField(write_only=True, trim_whitespace=False)
+    new_password = serializers.CharField(
+        write_only=True, trim_whitespace=False, max_length=128
+    )
+    confirm_password = serializers.CharField(
+        write_only=True, trim_whitespace=False, max_length=128
+    )
 
     def validate_new_password(self, value: str) -> str:
         validate_password(value)
         return value
+
+    def validate(self, attrs):
+        if attrs["new_password"] != attrs["confirm_password"]:
+            raise serializers.ValidationError(
+                {"confirm_password": "The two passwords do not match."}
+            )
+        return attrs
 
 
 class LoginHistorySerializer(serializers.ModelSerializer):

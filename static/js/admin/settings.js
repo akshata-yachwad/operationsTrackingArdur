@@ -480,56 +480,82 @@ function filterUsers(searchText = '') {
     }
 }
 
-// Show reset password confirmation modal
-function showResetPasswordConfirmation(empId, name) {
-    if (!empId || !name) {
-        showToast('Invalid user data', 'error');
-        return;
-    }
+let adminPasswordRequestInProgress = false;
 
-    const modal = $('#resetPasswordModal');
-    modal.find('.modal-message').text(`Are you sure you want to reset the password for ${name} to 1122?`);
-    
-    // Update confirm button click handler
-    $('#confirmResetPasswordBtn').off('click').on('click', function() {
-        resetUserPassword(empId);
-        modal.fadeOut(300);
-    });
-    
-    modal.fadeIn(300);
+// Both administrator password actions require a unique, confirmed password.
+function showResetPasswordConfirmation(empId, name) {
+    openAdminPasswordModal(empId, name, true);
 }
 
-// Show change password modal
 function showChangePasswordModal(empId, name) {
+    openAdminPasswordModal(empId, name, false);
+}
+
+function openAdminPasswordModal(empId, name, isReset) {
     if (!empId || !name) {
         showToast('Invalid user data', 'error');
         return;
     }
 
     const modal = $('#changePasswordModal');
-    modal.find('.modal-message').text(`Enter the new password for ${name}:`);
-    $('#newPasswordInput').val(''); // Clear previous input
-    
-    // Update confirm button click handler
-    $('#confirmChangePasswordBtn').off('click').on('click', function() {
-        const newPassword = $('#newPasswordInput').val().trim();
-        if (!newPassword) {
-            showToast('Password cannot be empty', 'error');
+    $('#adminPasswordTitle').text(isReset ? 'Reset Password' : 'Change Password');
+    modal.find('.modal-message').text(
+        isReset
+            ? `Choose a new password for ${name} and share it with them securely.`
+            : `Set a new password for ${name} and share it with them securely.`
+    );
+    clearAdminPasswordFields();
+    $('#confirmChangePasswordBtn').text(isReset ? 'Reset Password' : 'Change Password');
+
+    $('#adminPasswordForm').off('submit').on('submit', function(event) {
+        event.preventDefault();
+        if (adminPasswordRequestInProgress) return;
+
+        const newPassword = $('#newPasswordInput').val();
+        const confirmPassword = $('#confirmPasswordInput').val();
+        if (newPassword.length < 8) {
+            showToast('Password must be at least 8 characters', 'error');
             return;
         }
-        resetUserPassword(empId, newPassword);
-        modal.fadeOut(300);
+        if (newPassword !== confirmPassword) {
+            showToast('Passwords do not match', 'error');
+            return;
+        }
+        resetUserPassword(empId, newPassword, confirmPassword);
     });
-    
+
     modal.fadeIn(300);
 }
 
-// Reset or change user password
-function resetUserPassword(empId, newPassword = '1122') {
+function closeAdminPasswordModal() {
+    if (adminPasswordRequestInProgress) return;
+    clearAdminPasswordFields();
+    $('#changePasswordModal').fadeOut(300);
+}
+
+function clearAdminPasswordFields() {
+    $('#newPasswordInput, #confirmPasswordInput').val('').attr('type', 'password');
+    $('#changePasswordModal .password-toggle[data-password-target]').each(function() {
+        this.setAttribute('aria-pressed', 'false');
+        this.setAttribute('aria-label', 'Show password');
+        const icon = this.querySelector('i');
+        if (icon) {
+            icon.classList.add('fa-eye');
+            icon.classList.remove('fa-eye-slash');
+        }
+    });
+}
+
+function resetUserPassword(empId, newPassword, confirmPassword) {
     if (!empId) {
         showToast('Invalid employee ID', 'error');
         return;
     }
+
+    adminPasswordRequestInProgress = true;
+    const submitButton = $('#confirmChangePasswordBtn');
+    const originalText = submitButton.text();
+    submitButton.prop('disabled', true).text('Updating...');
 
     $.ajax({
         url: `/api/v1/auth/password/reset/`,
@@ -540,17 +566,46 @@ function resetUserPassword(empId, newPassword = '1122') {
         },
         data: JSON.stringify({
             emp_id: empId,
-            new_password: newPassword
+            new_password: newPassword,
+            confirm_password: confirmPassword
         }),
         success: function(response) {
-            showToast(newPassword === '1122' ? 'Password reset successfully to 1122' : 'Password changed successfully');
-            loadAllUsers(); // Reload the users list
+            showToast('Password updated. The user must sign in again.');
+            clearAdminPasswordFields();
+            $('#changePasswordModal').fadeOut(300);
+            loadAllUsers();
         },
-        error: function(xhr, status, error) {
-            showToast('Error resetting password: ' + (xhr.responseJSON?.error || error || 'Unknown error'), 'error');
+        error: function(xhr) {
+            const message = xhr.responseJSON?.error?.message;
+            showToast(
+                typeof message === 'string' ? message : 'Unable to update the password. Please try again.',
+                'error'
+            );
+        },
+        complete: function() {
+            adminPasswordRequestInProgress = false;
+            submitButton.prop('disabled', false).text(originalText);
         }
     });
 }
+
+document.addEventListener('click', function(event) {
+    const toggle = event.target.closest('.password-toggle[data-password-target]');
+    if (!toggle) return;
+
+    const input = document.getElementById(toggle.dataset.passwordTarget);
+    if (!input) return;
+
+    const showing = input.type === 'password';
+    input.type = showing ? 'text' : 'password';
+    toggle.setAttribute('aria-pressed', String(showing));
+    toggle.setAttribute('aria-label', showing ? 'Hide password' : 'Show password');
+    const icon = toggle.querySelector('i');
+    if (icon) {
+        icon.classList.toggle('fa-eye', !showing);
+        icon.classList.toggle('fa-eye-slash', showing);
+    }
+});
 
 // Escape HTML to prevent XSS
 function escapeHtml(unsafe) {

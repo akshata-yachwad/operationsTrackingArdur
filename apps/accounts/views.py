@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from django.contrib.auth import logout as django_logout
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.views import APIView
@@ -79,7 +80,8 @@ class PasswordChangeView(EnvelopeMixin, APIView):
             serializer.validated_data["current_password"],
             serializer.validated_data["new_password"],
         )
-        return self.ok({"detail": "Password updated."})
+        django_logout(request)
+        return self.ok({"detail": "Password updated. Sign in again."})
 
 
 class PasswordResetView(EnvelopeMixin, APIView):

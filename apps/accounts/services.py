@@ -9,7 +9,9 @@ would otherwise keep streaming to a signed-out user.
 from __future__ import annotations
 
 import logging
+from importlib import import_module
 
+from django.conf import settings
 from django.contrib.auth import authenticate
 from django.contrib.auth import login as django_login
 from django.contrib.auth import logout as django_logout
@@ -175,12 +177,16 @@ class AuthService(BaseService):
         except Exception:
             pass
 
+    @transaction.atomic
     def change_password(self, user: User, current_password: str, new_password: str) -> None:
+        user = User.objects.select_for_update().get(pk=user.pk)
         if not user.check_password(current_password):
             raise AuthenticationError("Your current password is not correct.")
 
+        validate_password(new_password, user=user)
         user.password = make_password(new_password)
         user.save(update_fields=["password"])
+        self._invalidate_user_sessions(user)
         self.log("password_changed", emp_id=user.emp_id)
 
     def signup(self, emp_id: str, name: str, password: str) -> User:
@@ -205,24 +211,49 @@ class AuthService(BaseService):
         self.log("signup", emp_id=emp_id)
         return user
 
+    @transaction.atomic
     def reset_password(self, emp_id: str, new_password: str) -> User:
         """Administrative reset — the admin check is the caller's job via
-        permission_classes, and re-asserted here for non-HTTP callers."""
+        permission_classes, and re-asserted here for non-HTTP callers. The
+        administrator supplies the replacement password out of band."""
         self.require_admin("Only an administrator can reset a password.")
 
+        if self.actor and self.actor.emp_id == emp_id:
+            raise ValidationError("Use the self-service password change to change your own password.")
+
         user = self.require_found(
-            User.objects.filter(emp_id=emp_id).first(),
+            User.objects.select_for_update().filter(emp_id=emp_id).first(),
             f"No login exists for employee {emp_id}.",
         )
+        validate_password(new_password, user=user)
         user.password = make_password(new_password)
         user.save(update_fields=["password"])
 
         self.log("password_reset", target=emp_id)
-        # Force them to sign in again everywhere with the new credentials.
-        self._revoke_sockets(emp_id, None)
+        self._invalidate_user_sessions(user)
         return user
 
     # ── internals ────────────────────────────────────────────
+
+    def _invalidate_user_sessions(self, user: User) -> None:
+        """Revoke every tracked HTTP session and live socket after a password change."""
+        session_keys = set(
+            LoginHistory.objects.filter(emp_id=user.emp_id)
+            .exclude(session_key="")
+            .values_list("session_key", flat=True)
+        )
+        if user.session_id:
+            session_keys.add(user.session_id)
+
+        LoginHistory.objects.filter(
+            emp_id=user.emp_id, logout_time__isnull=True
+        ).update(logout_time=now_ist())
+        User.objects.filter(pk=user.pk).update(session_id=None)
+
+        session_store = import_module(settings.SESSION_ENGINE).SessionStore()
+        for session_key in session_keys:
+            session_store.delete(session_key)
+        transaction.on_commit(lambda: self._revoke_sockets(user.emp_id, None))
 
     @staticmethod
     def _revoke_sockets(emp_id: str, session_key: str | None) -> None:
